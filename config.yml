@@ -1,0 +1,52 @@
+# Configuration for DRC 30x30 optimization
+
+data:
+  file_path : "drc_1km_reference_grid_w_GEE_data_w_neighbors.csv"
+  protected_th : 0.8
+
+optimization:
+  maximize_cols :
+  - "mean_agb"
+  - "mean_ESP"
+  - "FACET_primary_forest_frac"
+  - "FACET_savanna_frac"
+  - "FACET_secondary_forest_frac"
+  - "mean_FLII"
+  - "mean_GCP_Dinerstein"
+  - "mean_GCP_Jung"
+  - "gc_frac"
+  - "mean_GSOC"
+  - "kba_frac"
+  - "TMF_undisturbed_frac"
+
+  minimize_cols :
+    - "pop_sum"
+    - "TMF_ongoing_dd_frac"
+    - "TMF_regrowth_frac"
+
+  weights : {
+    "mean_agb": 1.0,
+    "mean_ESP": 1.0,
+    "FACET_primary_forest_frac": 1.0,
+    "FACET_savanna_frac": 1.0,
+    "FACET_secondary_forest_frac": 1.0,
+    "mean_FLII": 1.0,
+    "mean_GCP_Dinerstein": 1.0,
+    "mean_GCP_Jung": 1.0,
+    "gc_frac": 1.0,
+    "mean_GSOC": 1.0,
+    "kba_frac": 1.0,
+    "TMF_undisturbed_frac": 1.0,
+    "pop_sum": 1.0,
+    "TMF_ongoing_dd_frac": 1.0,
+    "TMF_regrowth_frac": 1.0,
+  }
+
+  constraint_cols : 
+  - "dense_urban_cluster_frac"
+  - "low_density_rural_frac"
+  - "rural_cluster_frac"
+  - "suburban_periurban_frac"
+  - "semidense_urban_cluster_frac"
+  - "urban_center_frac"
+  - "oil_frac"
