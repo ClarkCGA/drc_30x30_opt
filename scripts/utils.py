@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pulp import LpProblem, LpVariable, LpMaximize, lpSum, LpBinary, PULP_CBC_CMD, LpStatus
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 def load_data(config, preprocess = True):
 
@@ -25,22 +26,33 @@ def pre_process_data(df):
     return df
 
 
-def map_col(df, plot_col, default_value=-1):
+def map_col(df, plot_col, colorbar=True, file_name=None):
+    # unique sorted coords
+    lats = np.sort(df["y_native"].unique())
+    lons = np.sort(df["x_native"].unique())
     
-    # Assume df has columns: "row", "col"
-    row_min, row_max = int(df["row"].min()), int(df["row"].max())
-    col_min, col_max = int(df["col"].min()), int(df["col"].max())
+    # create a 2D array for the values
+    arr = df.pivot(index="y_native", columns="x_native", values=plot_col).to_numpy()
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+    im = ax.imshow(
+        np.flipud(arr),              
+        extent=[lons.min(), lons.max(), lats.min(), lats.max()],
+        cmap="viridis",
+        aspect="auto",
+    )
 
-    n_rows = row_max - row_min + 1
-    n_cols = col_max - col_min + 1
-
-    arr = np.full((n_rows, n_cols), default_value, dtype=np.asarray(df[plot_col]).dtype)
-
-    r = (df["row"] - row_min).to_numpy()
-    c = (df["col"] - col_min).to_numpy()
-    arr[r, c] = df[plot_col].to_numpy()
-    plt.imshow(np.flipud(arr)) 
-    plt.colorbar()
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.title("Spatial grid of " + plot_col)
+    if colorbar:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        cb = plt.colorbar(im, cax=cax, label=plot_col)
+    ax.set_aspect('equal')
+    if file_name:
+        plt.savefig(file_name, bbox_inches="tight", dpi=300)
+    plt.show()
 
 
 def multi_c_obj(df, config):
@@ -88,15 +100,15 @@ def iden_units(df, config):
     
     print(f"N. of Identified Candidates: {len(cand_idx):,} out of {len(df):,} total planning units")
 
-    df["candidate"] = False
-    df.loc[cand_idx, "candidate"] = True
+    df["candidate"] = 0
+    df.loc[cand_idx, "candidate"] = 1
 
     return df
 
 
 def setup_model(df, protection_frac = 0.30, connectivity = True):
 
-    cand_idx = df[df["candidate"]].index
+    cand_idx = df[df["candidate"]==1].index
     
     # Assign Binary Decision (protected (1) or not (0))
     x = {i: LpVariable(f"x_{i}", cat=LpBinary) for i in cand_idx}
@@ -147,7 +159,7 @@ def solve_model(model, x, df):
     print(f"Status: {LpStatus[model.status]}")
     
     df["selected"] = 0.0
-    cand_idx = df[df["candidate"]].index
+    cand_idx = df[df["candidate"]==1].index
     for i in cand_idx:
         df.at[i, "selected"] = x[i].varValue or 0.0
 
