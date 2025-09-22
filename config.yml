@@ -1,7 +1,7 @@
 # Configuration for DRC 30x30 optimization
 
 data:
-  file_path : "drc_1km_reference_grid_w_GEE_data_w_neighbors.csv"
+  file_path : "drc_1km_planning_units.csv"
   protected_th : 0.8
 
 optimization:
