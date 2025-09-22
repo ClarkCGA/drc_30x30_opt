@@ -32,7 +32,7 @@ docker build -t drc-30x30-opt .
 ### 3. Run the Docker Container
 
 ```bash
-docker run -it -p 8888:8888 -v $(pwd):/home/mapuser/app drc-30x30-opt
+docker run -it -p 8888:8888 -v $(pwd):/app drc-30x30-opt
 ```
 This will print out the URL to the Jupyter Lab (including its token). Copy the URL, and paste into a browser to launch Jupyter Lab. 
 
