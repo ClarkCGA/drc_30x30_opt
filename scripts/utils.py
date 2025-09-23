@@ -26,7 +26,7 @@ def pre_process_data(df):
     return df
 
 
-def map_col(df, plot_col, colorbar=True, file_name=None):
+def map_col(df, plot_col, colorbar=True, file_name=None, title=None):
     # unique sorted coords
     lats = np.sort(df["y_native"].unique())
     lons = np.sort(df["x_native"].unique())
@@ -41,10 +41,12 @@ def map_col(df, plot_col, colorbar=True, file_name=None):
         cmap="viridis",
         aspect="auto",
     )
-
     plt.xlabel("X")
     plt.ylabel("Y")
-    plt.title("Spatial grid of " + plot_col)
+    if title:
+        plt.title(title)
+    else:
+        plt.title("Spatial extent of " + plot_col)
     if colorbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.1)
