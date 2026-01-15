@@ -1,6 +1,6 @@
 # 30 x 30 Spatial Planning Toolbox for the Democratic Republic of Congo (DRC)
-This repository contains the code for a spatial planning to tool to support implementation of the 30 x 30 initiaitve targets in the Democratic Republic of Congo (DRC). Specifically, this tool utilizies several geospatial datasets to find the most spatially optimized scenario for protecting new areas within DRC to meet the 30 x 30 target. 
-The tool is built based on a dataset developed at spatial planning units of 1 km x 1 km. For each planning unit, a set of variables are calculated from existing products (e.g. above ground biomass). Exising protected areas are also mapped to the 1 km x 1 km grid, and they are input as constraints to the model.
+This repository contains the code for a spatial planning to tool to support implementation of the 30 x 30 initiative targets in the Democratic Republic of Congo (DRC). Specifically, this tool utilizes several geospatial datasets to find the most spatially optimized scenario for protecting new areas within DRC to meet the 30 x 30 target. 
+The tool is built based on a dataset developed at spatial planning units of 1 km x 1 km. For each planning unit, a set of variables are calculated from existing products (e.g. above ground biomass). Existing protected areas are also mapped to the 1 km x 1 km grid, and they are input as constraints to the model.
 
 <div align="center">
     <img src="_figure/obj_score.png" alt="Map of objective score values" width="700">
@@ -47,3 +47,6 @@ Open Jupyter notebook `main_opt.ipynb`
 
 ## Acknowledgements
 This project is funded by the Wildlife Conservation Society (WCS) through a contract with Clark CGA. 
+
+## Support
+If you run into any issues running this code, or if you have questions about it you can open a ticket on this GitHub repository or contact Clark CGA team at `cga@clarku.edu`.
