@@ -165,9 +165,11 @@ def export_to_geotiff(
     transform = Affine(a, b, c, d, e, f)
 
     # Write GeoTIFF
-    os.makedirs("output", exist_ok=True)
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, file_name)
     with rasterio.open(
-        "output/" + file_name,
+        output_path,
         'w',
         driver='GTiff',
         height=arr.shape[0],
