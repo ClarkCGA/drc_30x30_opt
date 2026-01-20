@@ -1,10 +1,13 @@
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pulp import LpProblem, LpVariable, LpMaximize, lpSum, LpBinary, PULP_CBC_CMD, LpStatus
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine
+from rasterio.crs import CRS
+import re
 
 def load_data(config, preprocess = True):
     """
@@ -62,7 +65,7 @@ def pre_process_data(df, config):
     return df
 
 
-def visualize(df, plot_col, colorbar=True, file_name=None, title=None):
+def visualize(df, var, colorbar=True, file_name=None, title=None):
     """
     Create a spatial map visualization of a column from a DataFrame.
     This function generates a 2D map showing the spatial distribution of values
@@ -72,8 +75,8 @@ def visualize(df, plot_col, colorbar=True, file_name=None, title=None):
     ----------
     df : pandas.DataFrame
         DataFrame containing the data to be mapped. Must include columns 'x_native',
-        'y_native', and the column specified by plot_col.
-    plot_col : str
+        'y_native', and the column specified by var.
+    var : str
         Name of the column in df to visualize on the map.
     colorbar : bool, optional
         Whether to display a colorbar. Default is True.
@@ -81,7 +84,7 @@ def visualize(df, plot_col, colorbar=True, file_name=None, title=None):
         If provided, saves the figure to this file path with 300 dpi resolution.
         Default is None (figure is not saved).
     title : str, optional
-        Title for the plot. If not provided, defaults to "Spatial extent of {plot_col}".
+        Title for the plot. If not provided, defaults to "Spatial extent of {var}".
         Default is None.
     Returns
     -------
@@ -99,7 +102,7 @@ def visualize(df, plot_col, colorbar=True, file_name=None, title=None):
     lons = np.sort(df["x_native"].unique())
     
     # create a 2D array for the values
-    arr = df.pivot(index="y_native", columns="x_native", values=plot_col).to_numpy()
+    arr = df.pivot(index="y_native", columns="x_native", values=var).to_numpy()
     
     fig, ax = plt.subplots(figsize=(8,6))
     im = ax.imshow(
@@ -113,62 +116,70 @@ def visualize(df, plot_col, colorbar=True, file_name=None, title=None):
     if title:
         plt.title(title)
     else:
-        plt.title("Spatial extent of " + plot_col)
+        plt.title("Spatial extent of " + var)
     if colorbar:
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.1)
-        cb = plt.colorbar(im, cax=cax, label=plot_col)
+        cb = plt.colorbar(im, cax=cax, label=var)
     ax.set_aspect('equal')
     if file_name:
-        plt.savefig(file_name, bbox_inches="tight", dpi=300)
+        os.makedirs("output", exist_ok=True)
+        plt.savefig("output/" + file_name, bbox_inches="tight", dpi=300)
     plt.show()
 
 
-def export_to_geotiff(df, plot_col, out_path, epsg=4326):
+def export_to_geotiff(
+    df,
+    var,
+    file_name,
+    projection_info_path="data/projection_info.csv"
+):
     """
-    Export a DataFrame column as a GeoTIFF raster using latitude and longitude columns.
+    Export a DataFrame column as a GeoTIFF raster using a custom CRS/transform.
+    The CRS and affine transform are read from a GEE-exported CSV (projection_info.csv).
     Args:
-        df: DataFrame with 'x_native' (longitude), 'y_native' (latitude), and plot_col.
-        plot_col: Name of the column to export.
-        out_path: Output GeoTIFF file path.
-        epsg: EPSG code for CRS (default 4326).
+        df: DataFrame with 'x_native' (easting), 'y_native' (northing), and var.
+        var: Name of the column to export.
+        file_name: Output GeoTIFF file name.
+        projection_info_path: Path to CSV with columns: scale, transform, wkt.
     """
-
-    # Sort coordinates
-    lats = np.sort(df["y_native"].unique())
-    lons = np.sort(df["x_native"].unique())
 
     # Create 2D array
-    arr = df.pivot(index="y_native", columns="x_native", values=plot_col).to_numpy()
+    arr = df.pivot(index="y_native", columns="x_native", values=var).to_numpy()
 
-    # Calculate pixel size
-    if len(lons) > 1:
-        xres = (lons.max() - lons.min()) / (len(lons) - 1)
-    else:
-        xres = 1.0
-    if len(lats) > 1:
-        yres = (lats.max() - lats.min()) / (len(lats) - 1)
-    else:
-        yres = 1.0
+    # Load projection info (WKT + affine transform) exported from GEE
+    proj_df = pd.read_csv(projection_info_path)
+    if proj_df.empty:
+        raise ValueError(f"Projection info file is empty: {projection_info_path}")
+    wkt = str(proj_df.loc[0, "wkt"])
+    transform_str = str(proj_df.loc[0, "transform"])
 
-    # Origin is upper-left (max lat, min lon), arr is flipped vertically
-    transform = from_origin(lons.min() - xres/2, lats.max() + yres/2, xres, yres)
+    # Parse GEE transform string (PARAM_MT) into affine parameters
+    params = dict(re.findall(r'PARAMETER\["([^"]+)",\s*([-0-9\.eE]+)\]', transform_str))
+    a = float(params.get("elt_0_0", 1.0))
+    b = float(params.get("elt_0_1", 0.0))
+    c = float(params.get("elt_0_2", 0.0))
+    d = float(params.get("elt_1_0", 0.0))
+    e = float(params.get("elt_1_1", -1.0))
+    f = float(params.get("elt_1_2", 0.0))
+    transform = Affine(a, b, c, d, e, f)
 
     # Write GeoTIFF
+    os.makedirs("output", exist_ok=True)
     with rasterio.open(
-        out_path,
+        "output/" + file_name,
         'w',
         driver='GTiff',
         height=arr.shape[0],
         width=arr.shape[1],
         count=1,
         dtype=arr.dtype,
-        crs=f'EPSG:{epsg}',
+        crs=CRS.from_wkt(wkt),
         transform=transform,
         nodata=np.nan if np.issubdtype(arr.dtype, np.floating) else None
     ) as dst:
         dst.write(np.flipud(arr), 1)
-    print(f"GeoTIFF written to {out_path}")
+    print(f"GeoTIFF written to {file_name}")
 
 
 def multi_c_obj(df, config):
