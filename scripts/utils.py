@@ -124,7 +124,7 @@ def visualize(df, var, colorbar=True, file_name=None, title=None):
     ax.set_aspect('equal')
     if file_name:
         os.makedirs("output", exist_ok=True)
-        plt.savefig("output/" + file_name, bbox_inches="tight", dpi=300)
+        plt.savefig(os.path.join("output", file_name), bbox_inches="tight", dpi=300)
     plt.show()
 
 
