@@ -80,7 +80,6 @@ optimization:
     "mean_ESP" : 1.0,
     "mean_FLII" : 1.0,
     "mean_GCP_Dinerstein" : 1.0,
-    "mean_GCP_Jung" : 1.0,
     "mean_GlobalHumanModification" : 1.0,
     "mean_GSOC" : 1.0,
     "mean_HumanImpactIndex" : 1.0,

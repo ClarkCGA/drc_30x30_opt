@@ -1,0 +1,111 @@
+# Configuration for DRC 30x30 spatial optimization
+# Mixed Approach without the Green Corridor prioritization
+
+name: "Mixed Approach without Green Corridor"
+
+data:
+  file_path : "data/drc_1km_data_planning_units.csv"
+  protected_th : 0.8
+  protected_classes :
+  - "protected_frac"
+  - "cf_frac"
+  pre_process :
+  - "mean_GSOC"
+  - "mean_FLII"
+  - "mean_ornl_agb"
+  - "mean_GCP_Dinerstein"
+  - "mean_GCP_Jung"
+  - "mean_PeatCarbon"
+  - "mean_PeatThickness"
+  - "mean_GlobalHumanModification"
+  - "natural_semi_grassland_frac"
+  - "mean_ornl_bgb"
+  - "Future_Anthropogenic_Pressure"
+  - "mean_Current_Anthropogenic_Pressure"
+  - "mean_esa_agb"
+  - "mean_climate_vulnerability"
+
+
+optimization:
+  maximize_cols :
+  - "DenseEvergreen_frac"
+  - "FACET_primary_forest_frac"
+  - "FACET_savanna_frac"
+  - "FACET_secondary_forest_frac"
+  - "FACET_water_frac"
+  # - "gc_frac"
+  - "kba_frac"
+  - "Mangrove_frac"
+  - "Maranthaceae_frac"
+  - "mean_esa_agb"
+  - "mean_ESP"
+  - "mean_FLII"
+  - "mean_GCP_Dinerstein"
+  - "mean_GSOC"
+  - "mean_ornl_agb"
+  - "mean_ornl_bgb"
+  - "mean_PeatCarbon"
+  - "mean_PeatThickness"
+  - "natural_semi_grassland_frac"
+  - "OpenForest_frac"
+  - "SemiDeciduous_frac"
+  - "SemiDeciduousPioneer_frac"
+  - "SwampForest_frac"
+  - "TMF_undisturbed_frac"
+
+  minimize_cols :
+  - "Future_Anthropogenic_Pressure"
+  - "mean_climate_vulnerability"
+  - "mean_Current_Anthropogenic_Pressure"
+  - "mean_GlobalHumanModification"
+  - "mean_MarinePressure"
+  - "pop_sum"
+  - "TMF_ongoing_dd_frac"
+  - "TMF_regrowth_frac"
+
+  weights : {
+    "DenseEvergreen_frac" : 1.0,
+    "FACET_primary_forest_frac" : 1.0,
+    "FACET_savanna_frac" : 1.0,
+    "FACET_secondary_forest_frac" : 1.0,
+    "FACET_water_frac" : 1.0,
+    "Future_Anthropogenic_Pressure" : 1.0,
+    # "gc_frac" : 1.0,
+    "kba_frac" : 1.0,
+    "Mangrove_frac" : 1.0,
+    "Maranthaceae_frac" : 1.0,
+    "mean_climate_vulnerability" : 1.0,
+    "mean_Current_Anthropogenic_Pressure" : 1.0,
+    "mean_esa_agb" : 1.0,
+    "mean_ESP" : 1.0,
+    "mean_FLII" : 1.0,
+    "mean_GCP_Dinerstein" : 1.0,
+    "mean_GlobalHumanModification" : 1.0,
+    "mean_GSOC" : 1.0,
+    "mean_HumanImpactIndex" : 1.0,
+    "mean_MarinePressure" : 1.0,
+    "mean_ornl_agb" : 1.0,
+    "mean_ornl_bgb" : 1.0,
+    "mean_PeatCarbon" : 1.0,
+    "mean_PeatThickness" : 1.0,
+    "natural_semi_grassland_frac" : 1.0,
+    "OpenForest_frac" : 1.0,
+    "pop_sum" : 1.0,
+    "SemiDeciduous_frac" : 1.0,
+    "SemiDeciduousPioneer_frac" : 1.0,
+    "SwampForest_frac" : 1.0,
+    "TMF_ongoing_dd_frac" : 1.0,
+    "TMF_regrowth_frac" : 1.0,
+    "TMF_undisturbed_frac" : 1.0,
+  }
+
+  constraint_cols : 
+  - ["dense_urban_cluster_frac", 0.3]
+  - ["low_density_rural_frac", 0.8]
+  - ["oil_frac", 0]
+  - ["rural_cluster_frac", 0.8]
+  - ["semidense_urban_cluster_frac", 0.3]
+  - ["suburban_periurban_frac", 0.3]
+  - ["TMF_deforested_frac", 0.3]
+  - ["TMF_degraded_frac", 0.3]
+  - ["urban_center_frac", 0.3]

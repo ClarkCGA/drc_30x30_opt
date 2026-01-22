@@ -104,27 +104,44 @@ def visualize(df, var, colorbar=True, file_name=None, title=None):
     # create a 2D array for the values
     arr = df.pivot(index="y_native", columns="x_native", values=var).to_numpy()
     
-    fig, ax = plt.subplots(figsize=(8,6))
+    fig = plt.figure(figsize=(8, 6))
+    fig.set_constrained_layout(False)
+    try:
+        fig.set_tight_layout(False)
+    except Exception:
+        pass
+
+    # Fixed title area (inside the figure)
+    title_ax = fig.add_axes([0.2, 0.91, 0.65, 0.06])
+    title_ax.axis("off")
+    title_text = title if title else "Spatial extent of " + var
+    title_ax.text(0.5, 0.5, title_text, ha="center", va="center", wrap=True)
+
+    if colorbar:
+        ax = fig.add_axes([0.10, 0.10, 0.75, 0.75])
+    else:
+        ax = fig.add_axes([0.10, 0.10, 0.80, 0.75])  # fixed plot area
+
     im = ax.imshow(
-        np.flipud(arr),              
+        np.flipud(arr),
         extent=[lons.min(), lons.max(), lats.min(), lats.max()],
         cmap="viridis",
         aspect="auto",
     )
-    plt.xlabel("X")
-    plt.ylabel("Y")
-    if title:
-        plt.title(title)
-    else:
-        plt.title("Spatial extent of " + var)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+
+
     if colorbar:
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.1)
-        cb = plt.colorbar(im, cax=cax, label=var)
-    ax.set_aspect('equal')
+        cax = fig.add_axes([0.88, 0.10, 0.03, 0.75])  # fixed colorbar area
+        fig.colorbar(im, cax=cax, label=var)
+
+    ax.set_aspect("equal")
+
     if file_name:
         os.makedirs("output", exist_ok=True)
-        plt.savefig(os.path.join("output", file_name), bbox_inches="tight", dpi=300)
+        plt.savefig(os.path.join("output", file_name), dpi=300)
+
     plt.show()
 
 
