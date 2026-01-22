@@ -1,7 +1,7 @@
 # Configuration for DRC 30x30 spatial optimization
-# Expansion of Existing Protected Areas only 
+# Expansion of Existing Protected Areas only with Peatland Prioritization
 
-name: "PA Only Approach"
+name: "PA Only Approach with Peatland Prioritization"
 
 data:
   file_path : "data/drc_1km_data_planning_units.csv"
@@ -85,8 +85,8 @@ optimization:
     "mean_MarinePressure" : 1.0,
     "mean_ornl_agb" : 1.0,
     "mean_ornl_bgb" : 1.0,
-    "mean_PeatCarbon" : 1.0,
-    "mean_PeatThickness" : 1.0,
+    "mean_PeatCarbon" : 4.0,
+    "mean_PeatThickness" : 4.0,
     "natural_semi_grassland_frac" : 1.0,
     "OpenForest_frac" : 1.0,
     "pop_sum" : 1.0,

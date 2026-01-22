@@ -1,7 +1,8 @@
 # Configuration for DRC 30x30 spatial optimization
-# Expansion of Existing Protected Areas only 
+# Expansion of Existing Protected Areas only without 
+# the Green Corridor prioritization
 
-name: "PA Only Approach"
+name: "PA Only Approach without Green Corridor"
 
 data:
   file_path : "data/drc_1km_data_planning_units.csv"
@@ -32,7 +33,7 @@ optimization:
   - "FACET_savanna_frac"
   - "FACET_secondary_forest_frac"
   - "FACET_water_frac"
-  - "gc_frac"
+  # - "gc_frac"
   - "kba_frac"
   - "Mangrove_frac"
   - "Maranthaceae_frac"
@@ -69,7 +70,7 @@ optimization:
     "FACET_secondary_forest_frac" : 1.0,
     "FACET_water_frac" : 1.0,
     "Future_Anthropogenic_Pressure" : 1.0,
-    "gc_frac" : 1.0,
+    # "gc_frac" : 1.0,
     "kba_frac" : 1.0,
     "Mangrove_frac" : 1.0,
     "Maranthaceae_frac" : 1.0,

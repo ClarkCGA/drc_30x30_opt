@@ -1,7 +1,9 @@
 # Configuration for DRC 30x30 spatial optimization
 # Expansion of Existing Protected Areas only 
+# but double weights for Climate Vulnerability, Current and Future Anthropogenic Pressure, 
+# Global Human Modification, and Population
 
-name: "PA Only Approach"
+name: "PA Only Approach with Enhanced Weights for Anthropogenic and Climate Factors"
 
 data:
   file_path : "data/drc_1km_data_planning_units.csv"
@@ -68,18 +70,18 @@ optimization:
     "FACET_savanna_frac" : 1.0,
     "FACET_secondary_forest_frac" : 1.0,
     "FACET_water_frac" : 1.0,
-    "Future_Anthropogenic_Pressure" : 1.0,
+    "Future_Anthropogenic_Pressure" : 2.0,
     "gc_frac" : 1.0,
     "kba_frac" : 1.0,
     "Mangrove_frac" : 1.0,
     "Maranthaceae_frac" : 1.0,
-    "mean_climate_vulnerability" : 1.0,
-    "mean_Current_Anthropogenic_Pressure" : 1.0,
+    "mean_climate_vulnerability" : 2.0,
+    "mean_Current_Anthropogenic_Pressure" : 2.0,
     "mean_esa_agb" : 1.0,
     "mean_ESP" : 1.0,
     "mean_FLII" : 1.0,
     "mean_GCP_Dinerstein" : 1.0,
-    "mean_GlobalHumanModification" : 1.0,
+    "mean_GlobalHumanModification" : 2.0,
     "mean_GSOC" : 1.0,
     "mean_HumanImpactIndex" : 1.0,
     "mean_MarinePressure" : 1.0,
@@ -89,7 +91,7 @@ optimization:
     "mean_PeatThickness" : 1.0,
     "natural_semi_grassland_frac" : 1.0,
     "OpenForest_frac" : 1.0,
-    "pop_sum" : 1.0,
+    "pop_sum" : 2.0,
     "SemiDeciduous_frac" : 1.0,
     "SemiDeciduousPioneer_frac" : 1.0,
     "SwampForest_frac" : 1.0,
