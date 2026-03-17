@@ -19,8 +19,8 @@ data:
   - "mean_GlobalHumanModification"
   - "natural_semi_grassland_frac"
   - "mean_ornl_bgb"
-  - "Future_Anthropogenic_Pressure"
-  - "mean_Current_Anthropogenic_Pressure"
+  - "mean_Anthropogenic_current_pressure"
+  - "mean_Anthropogenic_future_pressure"
   - "mean_esa_agb"
   - "mean_climate_vulnerability"
 
@@ -53,10 +53,12 @@ optimization:
   - "TMF_undisturbed_frac"
 
   minimize_cols :
-  - "Future_Anthropogenic_Pressure"
+  - "mean_Anthropogenic_future_pressure"
   - "mean_climate_vulnerability"
-  - "mean_Current_Anthropogenic_Pressure"
+  - "mean_Anthropogenic_current_pressure"
   - "mean_GlobalHumanModification"
+  - "max_river_order"
+  - "mean_erosion"
   - "mean_MarinePressure"
   - "pop_sum"
   - "TMF_ongoing_dd_frac"
@@ -68,13 +70,15 @@ optimization:
     "FACET_savanna_frac" : 1.0,
     "FACET_secondary_forest_frac" : 1.0,
     "FACET_water_frac" : 1.0,
-    "Future_Anthropogenic_Pressure" : 1.0,
+    "mean_Anthropogenic_future_pressure" : 1.0,
     "gc_frac" : 1.0,
     "kba_frac" : 1.0,
     "Mangrove_frac" : 1.0,
     "Maranthaceae_frac" : 1.0,
+    "max_river_order": 1.0,
+    "mean_erosion": 1.0,
     "mean_climate_vulnerability" : 1.0,
-    "mean_Current_Anthropogenic_Pressure" : 1.0,
+    "mean_Anthropogenic_current_pressure" : 1.0,
     "mean_esa_agb" : 1.0,
     "mean_ESP" : 1.0,
     "mean_FLII" : 1.0,
@@ -96,6 +100,22 @@ optimization:
     "TMF_ongoing_dd_frac" : 1.0,
     "TMF_regrowth_frac" : 1.0,
     "TMF_undisturbed_frac" : 1.0,
+    "amphibians_richness": 1.0,
+    "bird_species_richness": 1.0,
+    "freshwater_crabs_richness": 1.0,
+    "freshwater_crayfish_richness": 1.0,
+    "freshwater_fish_richness": 1.0,
+    "freshwater_molluscs_richness": 1.0,
+    "freshwater_odonata_richness": 1.0,
+    "freshwater_other_richness": 1.0,
+    "freshwater_plants_richness": 1.0,
+    "freshwater_shrimps_richness": 1.0,
+    "lake_wetland_frac": 1.0,
+    "mean_discharge": 1.0,
+    "mean_recharge": 1.0,
+    "mean_runoff_depth": 1.0,
+    "reptiles_richness": 1.0,
+    "river_density_frac": 1.0,
   }
 
   constraint_cols : 
