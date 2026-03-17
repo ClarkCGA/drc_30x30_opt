@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends coinor-cbc \
-    && apt-get install -y gdal-bin libgdal-dev \
+    && apt-get install -y gdal-bin libgdal-dev g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
