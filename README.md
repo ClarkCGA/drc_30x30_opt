@@ -51,6 +51,8 @@ This will print out the URL to the Jupyter Lab (including its token). Copy the U
 
 Open and run all cells in the Jupyter notebook `main_opt.ipynb`
 
+After running the optimization for all (or a selection of) the configurations, you can run the Jupyter notebook `visualize_consensus.ipynb` to visualize the consensus map among the outputs. 
+
 
 ## Acknowledgements
 This project is funded by the Wildlife Conservation Society (WCS) through a contract with Clark CGA. 
