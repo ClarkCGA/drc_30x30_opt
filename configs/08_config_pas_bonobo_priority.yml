@@ -122,7 +122,7 @@ optimization:
     "TMF_undisturbed_frac" : 1.0,
     "amphibians_richness": 1.0,
     "bird_species_richness": 1.0,
-    "bonobo_frac": 1.0,
+    "bonobo_frac": 2.0,
     "freshwater_crabs_richness": 1.0,
     "freshwater_crayfish_richness": 1.0,
     "freshwater_fish_richness": 1.0,

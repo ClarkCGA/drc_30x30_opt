@@ -91,7 +91,7 @@ optimization:
     "FACET_savanna_frac" : 1.0,
     "FACET_secondary_forest_frac" : 1.0,
     "FACET_water_frac" : 1.0,
-    "forest_elephant_frac" : 1.0,
+    "forest_elephant_frac" : 2.0,
     "mean_Anthropogenic_future_pressure" : 1.0,
     "gc_frac" : 1.0,
     "kba_frac" : 1.0,
