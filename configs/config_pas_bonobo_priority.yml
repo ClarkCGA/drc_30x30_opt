@@ -1,7 +1,10 @@
 # Configuration for DRC 30x30 spatial optimization
-# Expansion of Existing Protected Areas only 
+# Expansion of Existing Protected Areas only, with Bonobo (Pan paniscus)
+# prioritized as a dedicated single-species objective with double weight..
+# Does NOT include mammals_richness, and no other flagship species'
+# fraction column, to isolate the effect of this one species.
 
-name: "PA Only Approach"
+name: "PA Only Approach with Bonobo Priority"
 
 data:
   file_path : "data/drc_1km_data_planning_units.csv"
@@ -29,6 +32,7 @@ optimization:
   maximize_cols :
   - "amphibians_richness"
   - "bird_species_richness"
+  - "bonobo_frac"
   - "DenseEvergreen_frac"
   - "FACET_primary_forest_frac"
   - "FACET_savanna_frac"
@@ -45,7 +49,6 @@ optimization:
   - "gc_frac"
   - "kba_frac"
   - "lake_wetland_frac"
-  - "mammals_richness"
   - "Mangrove_frac"
   - "Maranthaceae_frac"
   - "mean_discharge"
@@ -119,6 +122,7 @@ optimization:
     "TMF_undisturbed_frac" : 1.0,
     "amphibians_richness": 1.0,
     "bird_species_richness": 1.0,
+    "bonobo_frac": 1.0,
     "freshwater_crabs_richness": 1.0,
     "freshwater_crayfish_richness": 1.0,
     "freshwater_fish_richness": 1.0,
@@ -135,7 +139,7 @@ optimization:
     "river_density_frac": 1.0,
   }
 
-  constraint_cols : 
+  constraint_cols :
   - ["dense_urban_cluster_frac", 0.3]
   - ["low_density_rural_frac", 0.8]
   - ["oil_frac", 0]

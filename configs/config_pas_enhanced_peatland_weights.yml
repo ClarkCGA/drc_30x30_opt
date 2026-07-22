@@ -34,6 +34,7 @@ optimization:
   - "FACET_water_frac"
   - "gc_frac"
   - "kba_frac"
+  - "mammals_richness"
   - "Mangrove_frac"
   - "Maranthaceae_frac"
   - "mean_esa_agb"
@@ -111,6 +112,7 @@ optimization:
     "freshwater_plants_richness": 1.0,
     "freshwater_shrimps_richness": 1.0,
     "lake_wetland_frac": 1.0,
+    "mammals_richness": 1.0,
     "mean_discharge": 1.0,
     "mean_recharge": 1.0,
     "mean_runoff_depth": 1.0,

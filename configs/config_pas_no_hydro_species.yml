@@ -45,6 +45,7 @@ optimization:
   - "gc_frac"
   - "kba_frac"
   - "lake_wetland_frac"
+  - "mammals_richness"
   - "Mangrove_frac"
   - "Maranthaceae_frac"
   - "mean_discharge"
@@ -127,6 +128,7 @@ optimization:
     "freshwater_plants_richness": 0.0,
     "freshwater_shrimps_richness": 0.0,
     "lake_wetland_frac": 0.0,
+    "mammals_richness": 0.0,
     "mean_discharge": 0.0,
     "mean_recharge": 0.0,
     "mean_runoff_depth": 0.0,
