@@ -65,7 +65,7 @@ def pre_process_data(df, config):
     return df
 
 
-def visualize(df, var, colorbar=True, file_name=None, title=None):
+def visualize(df, var, colorbar=True, file_name=None, title=None, show=True):
     """
     Create a spatial map visualization of a column from a DataFrame.
     This function generates a 2D map showing the spatial distribution of values
@@ -86,10 +86,13 @@ def visualize(df, var, colorbar=True, file_name=None, title=None):
     title : str, optional
         Title for the plot. If not provided, defaults to "Spatial extent of {var}".
         Default is None.
+    show : bool, optional
+        If True (default), displays the plot with plt.show(). If False, the
+        figure is closed after saving instead of displayed — useful when
+        batch-running many scenarios to avoid accumulating open figures.
     Returns
     -------
     None
-        Displays the plot using plt.show().
     Notes
     -----
     - The y-axis is flipped to align with typical coordinate system conventions.
@@ -142,7 +145,10 @@ def visualize(df, var, colorbar=True, file_name=None, title=None):
         os.makedirs("output", exist_ok=True)
         plt.savefig(os.path.join("output", file_name), dpi=300)
 
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 def export_to_geotiff(
