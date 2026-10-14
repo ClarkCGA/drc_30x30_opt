@@ -67,7 +67,7 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
               f"({diag['eligible_min_gt_max_pct']:.1f}% of cells passing the exclusion rules)")
     utils.visualize(drc_df,
                     "objective_score",
-                    title=f"{name} - Objective Score",
+                    title=f"Prioritization Score – {name}",
                     file_name=f"{name} - Objective Score.png",
                     show=False, output_dir=output_dir)
 
@@ -76,7 +76,7 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
     utils.visualize(drc_df,
                     "candidate",
                     colorbar=False,
-                    title=f"{name} - Candidate Spatial Units for Protection",
+                    title=f"Candidate Planning Units – {name}",
                     file_name=f"{name} - Candidates.png",
                     show=False, output_dir=output_dir)
 
@@ -92,12 +92,12 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
     if verbose:
         print(f"Selected area (baseline + new): {used_area:,.0f} km2 ({used_area / total_area:.2%} of total)")
 
-    # Selected areas to protect
+    # Priority areas (baseline + newly selected units)
     utils.visualize(drc_df,
                     "selected",
                     colorbar=False,
                     file_name=f"{name}.png",
-                    title=f"{name} - Selected Areas to Protect",
+                    title=f"Priority Areas – {name}",
                     show=False, output_dir=output_dir)
     utils.export_to_geotiff(drc_df, "selected", f"{name}.tif", output_dir=output_dir)
 
@@ -106,7 +106,7 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
                     "protected",
                     colorbar=False,
                     file_name=f"{name} - Baseline Areas.png",
-                    title=f"{name} - Baseline Areas ({config.get('baseline', '')})",
+                    title=f"Baseline Areas – {name}",
                     show=False, output_dir=output_dir)
     utils.export_to_geotiff(drc_df, "protected", f"{name} - Baseline Areas.tif", output_dir=output_dir)
 

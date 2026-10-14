@@ -2,7 +2,8 @@
 # Baseline = existing protected areas (PAs) + CFCLs (Concessions Forestieres de
 # Communautes Locales, Local Community Forest Concessions), assuming all CFCLs are
 # eventually recognized as OECMs. Both count towards 30% and are locked in.
-# Ecological integrity theme share doubled (maximize layers only), with species.
+# Ecological integrity theme share doubled (2 instead of 1) on both the maximize
+# and the minimize side, with species.
 
 extends:
 - "configs/common/defaults.yml"

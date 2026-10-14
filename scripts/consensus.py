@@ -113,7 +113,7 @@ def build_consensus(configs_dir="configs", output_dir="output", oil_overlay=True
     fig = plt.figure(figsize=(8, 6))
     title_ax = fig.add_axes([0.2, 0.91, 0.65, 0.06])
     title_ax.axis("off")
-    title_ax.text(0.5, 0.5, f"Consensus map across {n_runs} scenarios (newly selected areas)",
+    title_ax.text(0.5, 0.5, f"Agreement on Priority Areas across {n_runs} Scenarios (new areas beyond the baseline)",
                   ha="center", va="center", wrap=True)
     ax = fig.add_axes([0.10, 0.10, 0.75, 0.75])
 
@@ -147,7 +147,7 @@ def build_consensus(configs_dir="configs", output_dir="output", oil_overlay=True
 
     cax = fig.add_axes([0.88, 0.10, 0.03, 0.75])
     cbar = fig.colorbar(im, cax=cax, ticks=np.arange(0, n_runs + 1))
-    cbar.set_label("Number of scenarios selecting the unit (new areas)")
+    cbar.set_label("Number of scenarios in which the unit is a new priority area")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_dir / f"{file_name}.png", dpi=300)

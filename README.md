@@ -1,9 +1,9 @@
 # 30 x 30 Spatial Planning Toolbox for the Democratic Republic of Congo (DRC)
-This repository contains the code for a spatial planning tool to support implementation of the 30 x 30 initiative targets in the Democratic Republic of Congo (DRC). Specifically, this tool utilizes several geospatial datasets to find the most spatially optimized scenario for protecting new areas within DRC to meet the 30 x 30 target. 
+This repository contains the code for a spatial planning tool to support implementation of the 30 x 30 initiative targets in the Democratic Republic of Congo (DRC). Specifically, this tool utilizes several geospatial datasets to identify priority areas within the DRC that, together with existing protected areas, could meet the 30 x 30 target. 
 
 The tool is built based on a dataset developed at spatial planning units of 1 km x 1 km. For each planning unit, a set of variables are calculated from existing products (e.g. above ground biomass). Existing protected areas are also mapped to the 1 km x 1 km grid, and they are input as constraints to the model.
 
-This code should be used as a tool to run different scenarios for protection. The current scenario set (10 runs) is described below; the first round of scenarios is kept in `archive/`.
+This code should be used as a tool to explore different prioritization scenarios. The current scenario set (10 runs) is described below; the first round of scenarios is kept in `archive/`.
 
 ## Requirements
 ### Software
@@ -70,7 +70,7 @@ Config files are `01`–`10_config_<baseline>_<variant>.yml` (e.g. `01_config_pa
   - Limits of min-cut: one area cap and non-negative pair rewards only. Per-province budgets, per-theme or species targets, or patch-size rules would need the CBC path (on reduced problems). See [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md).
 
 ### Outputs
-In `output/`, per scenario: `<name>.png/.tif` (selected areas), `<name> - Baseline Areas.png/.tif`, `<name> - Objective Score.png`, `<name> - Candidates.png`. `scenario_summary.csv` has one row per scenario: areas, newly selected area inside oil blocks (km², area-weighted by `oil_frac`, and % of the newly selected area), share of the national STAR total captured by the new areas and by baseline + new areas, for all species and threatened species only (`star_share_*`, `star_threatened_share_*`, from `star_1km_summary.parquet`, reported for every run including the no-species runs), solver information (solver, status, objective, upper bound and gap), fragmentation (number of patches, single-cell patches, boundary edges), and score diagnostics (score distribution, number of eligible cells, share of cells where the minimize side outweighs the maximize side). `visualize_consensus.ipynb` writes `consensus_map.png/.tif`: the number of runs (out of 10) that newly select each unit, with baseline units as a separate class and oil-block outlines overlaid.
+In `output/`, per scenario: `<name>.png/.tif` (priority areas: baseline + newly selected units), `<name> - Baseline Areas.png/.tif`, `<name> - Objective Score.png`, `<name> - Candidates.png`. `scenario_summary.csv` has one row per scenario: areas, newly selected area inside oil blocks (km², area-weighted by `oil_frac`, and % of the newly selected area), share of the national STAR total captured by the new areas and by baseline + new areas, for all species and threatened species only (`star_share_*`, `star_threatened_share_*`, from `star_1km_summary.parquet`, reported for every run including the no-species runs), solver information (solver, status, objective, upper bound and gap), fragmentation (number of patches, single-cell patches, boundary edges), and score diagnostics (score distribution, number of eligible cells, share of cells where the minimize side outweighs the maximize side). `visualize_consensus.ipynb` writes `consensus_map.png/.tif`: the number of runs (out of 10) that newly select each unit, with baseline units as a separate class and oil-block outlines overlaid.
 
 ## STAR species input
 

@@ -29,9 +29,9 @@ optimization:
   protection_frac: 0.30
 
   # Connectivity: reward (in score units) for every pair of adjacent selected
-  # planning units (sharing a 1 km edge). 0 disables it. w = 0.25 roughly
-  # halves the outer boundary of the selection for ~1.3% of the theme score
-  # (see docs/METHODS_NOTES.md).
+  # planning units (sharing a 1 km edge). 0 disables it. On the full grid,
+  # w = 0.25 cuts the number of patches by ~92% and the outer boundary of the
+  # selection by ~41% for ~0.2% of the theme score (see docs/METHODS_NOTES.md).
   connectivity:
     weight: 0.25
 
