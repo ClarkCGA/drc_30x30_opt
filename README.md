@@ -44,9 +44,9 @@ All layers are grouped into seven themes (`configs/common/themes.yml`):
 - Every layer is rescaled to 0-1 (min-max); no-data cells are set to 0 before rescaling.
 - Balancing applies **only to maximize layers**: each theme gets a share of 1 (2 in its priority run), split equally across the theme's maximize layers.
 - Biodiversity is split 50% KBA / 50% species. The species half is the per-cell sum of the STAR values (which already include the category weights), so species contribute in proportion to their STAR values. In runs without species, KBA gets the full Biodiversity share.
-- Minimize layers are not balanced: each has weight 1.0 and is subtracted.
-- Score per cell = Σ(weight × rescaled maximize layer) − Σ(1.0 × rescaled minimize layer). Units with score ≤ 0 or failing an exclusion rule are not candidates (baseline units are always included).
-- Climate adaptation has no maximize layer, so in practice the maximize side sums to 6 (7 in a priority run) and the minimize side to 10.
+- Minimize layers are not balanced: each has weight 1.0 and is subtracted. In a theme's priority run, its minimize layers are also multiplied (×2), e.g. the six Ecological integrity minimize layers get weight 2.0 each in the *Ecological integrity x2* runs.
+- Score per cell = Σ(weight × rescaled maximize layer) − Σ(weight × rescaled minimize layer). Units with score ≤ 0 or failing an exclusion rule are not candidates (baseline units are always included).
+- Climate adaptation has no maximize layer, so in practice the maximize side sums to 6 (7 in a priority run) and the minimize side to 10 (16 in the *Ecological integrity x2* runs; still 10 in the Biodiversity and Climate mitigation x2 runs, as those themes have no minimize layers).
 
 ### Scenarios (`configs/`)
 For each baseline:
@@ -56,7 +56,7 @@ For each baseline:
 | Balanced | yes | none |
 | Balanced, no species | no | none |
 | Biodiversity x2 | yes | Biodiversity share 2 |
-| Ecological integrity x2 | yes | Ecological integrity share 2 |
+| Ecological integrity x2 | yes | Ecological integrity share 2, its minimize layers ×2 |
 | Climate mitigation x2 | yes | Climate mitigation share 2 |
 
 Config files are `01`–`10_config_<baseline>_<variant>.yml` (e.g. `01_config_pas_baseline_balanced.yml`, `02_config_pas_cfcl_baseline_balanced.yml`), and scenario names follow `"<baseline> - <variant>"` (e.g. `PAs+CFCLs as baseline - Biodiversity x2`); output files are named after the scenario name.

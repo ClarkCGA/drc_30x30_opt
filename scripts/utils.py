@@ -111,8 +111,10 @@ def compute_weights(config, species_available=None):
         according to the theme's explicit `shares` (fractions of the share).
       - A layer that is unavailable in this run (the STAR species layer in a
         no-species run) is dropped and the remaining shares are renormalized.
-      - Every minimize layer gets `weighting.minimize_weight` (1.0); minimize
-        layers are not balanced and not affected by priority multipliers.
+      - Every minimize layer gets `weighting.minimize_weight` (1.0) times the
+        priority multiplier of its theme (e.g. 2.0 for the Ecological integrity
+        minimize layers in the Ecological integrity x2 run); minimize layers
+        are not balanced across a theme.
     Parameters
     ----------
     config : dict
@@ -140,7 +142,8 @@ def compute_weights(config, species_available=None):
 
     rows = []
     for key, theme in themes.items():
-        share = base_share * float(priority.get(key, 1.0))
+        multiplier = float(priority.get(key, 1.0))
+        share = base_share * multiplier
         max_cols = [c for c in theme.get("maximize", []) if species_available or c != SPECIES_COL]
         shares = theme.get("shares") or {}
         if shares:
@@ -155,7 +158,7 @@ def compute_weights(config, species_available=None):
                          "weight": share * raw[c] / total, "theme_share": share})
         for c in theme.get("minimize", []):
             rows.append({"theme": key, "column": c, "direction": -1.0,
-                         "weight": minimize_weight, "theme_share": np.nan})
+                         "weight": minimize_weight * multiplier, "theme_share": np.nan})
 
     weights = pd.DataFrame(rows)
     dup = weights["column"][weights["column"].duplicated()].tolist()

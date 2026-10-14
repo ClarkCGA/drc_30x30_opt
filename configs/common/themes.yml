@@ -9,7 +9,8 @@
 #   - A layer that is unavailable in a run (e.g. the STAR species layer in a
 #     no-species run) is dropped and the remaining shares are renormalized,
 #     so KBA receives the full Biodiversity share when species are excluded.
-#   - Minimize layers are NOT balanced: each gets `weighting.minimize_weight` (1.0).
+#   - Minimize layers are NOT balanced: each gets `weighting.minimize_weight` (1.0),
+#     times the theme's priority multiplier in its priority run (e.g. 2.0).
 #   - Scenario configs set priority multipliers under `weighting.priority`,
 #     e.g. {biodiversity: 2.0}.
 #   - All layers are rescaled to 0-1 (min-max) before weighting.

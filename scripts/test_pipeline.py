@@ -34,7 +34,9 @@ def check_weights(config_paths):
         for theme, share in mx.items():
             expected = float(prio.get(theme, 1.0))
             assert np.isclose(share, expected), f"{p}: theme {theme} share {share} != {expected}"
-        assert (w.loc[w["direction"] < 0, "weight"] == 1.0).all(), f"{p}: minimize weights != 1"
+        mn = w[w["direction"] < 0]
+        expected_min = mn["theme"].map(lambda t: float(prio.get(t, 1.0)))
+        assert np.allclose(mn["weight"], expected_min), f"{p}: minimize weights != priority multiplier"
         bio = w[w["theme"] == "biodiversity"].set_index("column")["weight"]
         if utils.species_included(c):
             assert np.isclose(bio["kba_frac"], bio["star_total"]), f"{p}: KBA/species split not 50/50"
