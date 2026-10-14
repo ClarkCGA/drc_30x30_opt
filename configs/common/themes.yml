@@ -1,0 +1,128 @@
+# Thematic grouping of optimization layers (shared by every scenario config).
+#
+# Balancing rules (applied in scripts/utils.py::compute_weights):
+#   - Each theme gets a share of `weighting.base_share` (1.0) on the maximize
+#     side and, separately, on the minimize side, multiplied by the scenario's
+#     priority multiplier for that theme (e.g. 2.0 in its priority run).
+#   - A theme's maximize share is split equally across its maximize layers,
+#     unless the theme lists explicit `shares` (fractions of the theme share).
+#   - A theme's minimize share is split equally across its minimize layers.
+#   - A theme without layers on one side contributes 0 on that side.
+#   - A layer that is unavailable in a run (e.g. the STAR species layer in a
+#     no-species run) is dropped and the remaining shares are renormalized,
+#     so KBA receives the full Biodiversity share when species are excluded.
+#   - Scenario configs set priority multipliers under `weighting.priority`,
+#     e.g. {biodiversity: 2.0}.
+#   - All layers are rescaled to 0-1 (min-max) before weighting.
+#
+# `star_total` is not a column of the planning-unit table: it is the per-cell
+# sum of all sp_<id_no> columns of the STAR species Parquet (values already
+# include IUCN category weights), computed in chunks by utils.load_star_total.
+
+weighting:
+  base_share: 1.0
+
+# Rescaling of the scored layers to 0-1 (scripts/utils.py::rescale):
+#   minmax: (v - min) / (max - min)  [default]
+#   rank:   percentile rank among cells with a value > 0 (ties share their
+#           average rank); cells with value <= 0 get 0. Keeps the order,
+#           drops the magnitudes.
+# star_total uses rank because it is extremely heavy-tailed (a few cells of
+# micro-endemic species dominate it; min-max would leave ~0 everywhere else).
+# See docs/METHODS_NOTES.md.
+scaling:
+  default: "minmax"
+  columns:
+    star_total: "rank"
+
+# No-data handling for the scored layers (scripts/utils.py::pre_process_data):
+# `default` applies to every layer not listed under `columns`; a value can be
+# a number, "median" or "mean" (over the layer's non-missing cells). See
+# docs/METHODS_NOTES.md for the coverage facts behind these choices.
+fill_na:
+  default: 0.0
+  columns:
+    mean_Anthropogenic_current_pressure: "median"
+    mean_Anthropogenic_future_pressure: "median"
+    mean_climate_vulnerability: "median"
+
+themes:
+  biodiversity:
+    label: "Biodiversity"
+    maximize:
+      - "kba_frac"
+      - "star_total"
+    shares:
+      kba_frac: 0.5
+      star_total: 0.5
+    minimize: []
+
+  ecological_integrity:
+    label: "Ecological integrity"
+    maximize:
+      - "mean_FLII"
+      - "mean_PeatThickness"
+      - "natural_semi_grassland_frac"
+      # Shapiro forest classes
+      - "DenseEvergreen_frac"
+      - "SemiDeciduous_frac"
+      - "SemiDeciduousPioneer_frac"
+      - "Mangrove_frac"
+      - "Maranthaceae_frac"
+      - "OpenForest_frac"
+      - "SwampForest_frac"
+      # FACET classes
+      - "FACET_primary_forest_frac"
+      - "FACET_secondary_forest_frac"
+      - "FACET_savanna_frac"
+      - "FACET_water_frac"
+      - "TMF_undisturbed_frac"
+    minimize:
+      - "mean_GlobalHumanModification"
+      - "mean_Anthropogenic_current_pressure"
+      - "mean_Anthropogenic_future_pressure"
+      - "pop_sum"
+      - "TMF_ongoing_dd_frac"
+      - "TMF_regrowth_frac"
+
+  climate_mitigation:
+    label: "Climate mitigation (carbon)"
+    maximize:
+      - "mean_esa_agb"
+      - "mean_ornl_agb"
+      - "mean_ornl_bgb"
+      - "mean_GSOC"
+      - "mean_PeatCarbon"
+    minimize: []
+
+  climate_adaptation:
+    label: "Climate adaptation"
+    maximize: []
+    minimize:
+      - "mean_climate_vulnerability"
+
+  freshwater:
+    label: "Freshwater"
+    maximize:
+      - "mean_recharge"
+      - "mean_discharge"
+      - "mean_runoff_depth"
+      - "lake_wetland_frac"
+      - "river_density_frac"
+    minimize:
+      - "max_river_order"
+      - "mean_erosion"
+      - "mean_MarinePressure"
+
+  ecosystem_services:
+    label: "Ecosystem services"
+    maximize:
+      - "mean_ESP"
+    minimize: []
+
+  conservation_priorities:
+    label: "Conservation priorities & spatial planning"
+    maximize:
+      - "mean_GCP_Dinerstein"
+      - "gc_frac"
+    minimize: []

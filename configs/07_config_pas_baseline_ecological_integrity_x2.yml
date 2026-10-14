@@ -1,0 +1,27 @@
+# DRC 30x30 spatial optimization scenario 07
+# Baseline = existing protected areas (PAs). PAs count towards 30% and are locked in;
+# CFCLs are not counted and units with > 30% CFCL cover are excluded.
+# Ecological integrity theme share doubled (2 instead of 1) on both the maximize
+# and the minimize side, with species.
+
+extends:
+- "configs/common/defaults.yml"
+- "configs/common/themes.yml"
+
+name: "PAs as baseline - Ecological integrity x2"
+baseline: "PAs as baseline"
+
+data:
+  protected_classes:
+  - "protected_frac"
+
+species:
+  include: true
+
+weighting:
+  priority:
+    ecological_integrity: 2.0
+
+optimization:
+  extra_constraint_cols:
+  - ["cfcl_frac", 0.3]

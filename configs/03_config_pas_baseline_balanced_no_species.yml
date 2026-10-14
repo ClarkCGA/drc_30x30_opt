@@ -1,0 +1,25 @@
+# DRC 30x30 spatial optimization scenario 03
+# Baseline = existing protected areas (PAs). PAs count towards 30% and are locked in;
+# CFCLs are not counted and units with > 30% CFCL cover are excluded.
+# All seven themes balanced, without the STAR species layer (KBA receives the full Biodiversity share).
+
+extends:
+- "configs/common/defaults.yml"
+- "configs/common/themes.yml"
+
+name: "PAs as baseline - Balanced, no species"
+baseline: "PAs as baseline"
+
+data:
+  protected_classes:
+  - "protected_frac"
+
+species:
+  include: false
+
+weighting:
+  priority: {}
+
+optimization:
+  extra_constraint_cols:
+  - ["cfcl_frac", 0.3]
