@@ -6,7 +6,10 @@ Test the optimization pipeline before the real STAR data is available.
   2. Score diagnostics on the FULL grid for every scenario (no solve): how
      many cells have a positive score / pass the exclusion rules, and whether
      the minimize side dominates the maximize side.
-  3. End-to-end runs of every scenario on a small spatial subset (solve,
+  3. Solver cross-check on the subset: the min-cut solution must match CBC
+     (same objective within CBC's 0.1% gap, CBC never above the min-cut
+     upper bound), with and without connectivity.
+  4. End-to-end runs of every scenario on a small spatial subset (solve,
      maps, GeoTIFFs, summary CSV incl. oil overlap) and the consensus map.
 
 Usage (from the repository root; uses the dummy STAR file by default):
@@ -63,7 +66,7 @@ def diagnostics(config_paths, out_dir):
     rows = []
     for p in config_paths:
         c = utils.load_config(p)
-        df = utils.load_data(c, connectivity=False)
+        df = utils.load_data(c)
         w = utils.compute_weights(c)
         max_part, min_part, themes = utils.score_components(df, w)
         eligible = utils.eligible_mask(df, c)
@@ -90,6 +93,34 @@ def diagnostics(config_paths, out_dir):
     return out
 
 
+def cross_check(config_path, bbox, weights=(0.0, 0.25)):
+    """Compare the min-cut and CBC solutions on a spatial subset."""
+    from scripts import utils, connectivity as conn
+    from scripts.pipeline import solve
+    c = utils.load_config(config_path)
+    base = utils.load_data(c, bbox=bbox)
+    base["objective_score"] = utils.multi_c_obj(base, c)
+    base = utils.iden_units(base, c)
+    edges = conn.rook_edges(base, c["data"].get("cell_size", 1000))
+    cap = c["optimization"]["protection_frac"] * base["area"].sum()
+    solver_cfg = c["optimization"]["solver"]
+    rows = []
+    for w in weights:
+        _, mc = solve(base.copy(), edges, w, "mincut", c["optimization"]["protection_frac"], solver_cfg, verbose=False)
+        df_cbc, cbc = solve(base.copy(), edges, w, "cbc", c["optimization"]["protection_frac"], solver_cfg,
+                            threads=4, verbose=False)
+        assert cbc["status"] == "Optimal", f"CBC status {cbc['status']}"
+        assert (df_cbc["area"] * df_cbc["selected"]).sum() <= cap + 1e-6
+        rel = (mc["objective"] - cbc["objective"]) / abs(cbc["objective"])
+        rows.append({"w": w, "mincut_obj": mc["objective"], "mincut_upper_bound": mc["upper_bound"],
+                     "mincut_gap": mc["gap_rel"], "cbc_obj": cbc["objective"], "mincut_minus_cbc_rel": rel,
+                     "mincut_sec": mc["solve_sec"], "cbc_sec": cbc["solve_sec"]})
+        assert rel >= -solver_cfg.get("gap_rel", 0.001), f"min-cut worse than CBC by {rel:.2e} (w={w})"
+        assert cbc["objective"] <= mc["upper_bound"] * (1 + 1e-6), f"CBC above min-cut upper bound (w={w})"
+    print(pd.DataFrame(rows).to_string(index=False))
+    print(f"[ok] min-cut matches CBC on the subset ({c['name']})")
+
+
 def end_to_end(config_paths, out_dir, bbox, configs_dir):
     from scripts.pipeline import run_scenario
     from scripts.consensus import build_consensus
@@ -112,6 +143,7 @@ if __name__ == "__main__":
     p.add_argument("--out-dir", default="output_test")
     p.add_argument("--skip-diagnostics", action="store_true")
     p.add_argument("--skip-e2e", action="store_true")
+    p.add_argument("--skip-cross-check", action="store_true")
     args = p.parse_args()
 
     os.environ["DRC_STAR_PATH"] = args.star
@@ -122,5 +154,7 @@ if __name__ == "__main__":
     check_star_reader(args.star)
     if not args.skip_diagnostics:
         diagnostics(configs, out_dir)
+    if not args.skip_cross_check:
+        cross_check(configs[0], DEFAULT_BBOX)
     if not args.skip_e2e:
         end_to_end(configs, out_dir, DEFAULT_BBOX, args.configs_dir)

@@ -9,13 +9,14 @@ Used by main_opt.ipynb and by scripts/test_pipeline.py.
 from pathlib import Path
 import time
 
-from pulp import LpStatus, value
+from pulp import LpStatus
 
+from scripts import connectivity as conn
 from scripts import utils
 
 
 def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
-                 time_limit=None, connectivity=None, verbose=True):
+                 time_limit=None, connectivity_weight=None, solver=None, verbose=True):
     """
     Run the full optimization pipeline for a single config file and export its outputs.
     Parameters
@@ -27,9 +28,9 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
         for test runs. The 30% area cap then applies to the subset's area.
     output_dir : str, optional
         Where maps, GeoTIFFs and scenario_summary.csv are written.
-    threads, time_limit, connectivity : optional
-        Override the solver/model settings of the config (optimization.solver,
-        optimization.connectivity).
+    threads, time_limit, connectivity_weight, solver : optional
+        Override the settings of the config (optimization.solver.threads /
+        time_limit / method, optimization.connectivity.weight).
     Returns
     -------
     dict
@@ -43,13 +44,15 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
     solver_cfg = opt.get("solver", {})
     threads = threads or solver_cfg.get("threads", 4)
     time_limit = time_limit or solver_cfg.get("time_limit", 2000)
-    connectivity = opt.get("connectivity", True) if connectivity is None else connectivity
+    weight = float(opt.get("connectivity", {}).get("weight", 0.0)) if connectivity_weight is None \
+        else float(connectivity_weight)
+    method = solver or solver_cfg.get("method", "mincut")
     protection_frac = opt.get("protection_frac", 0.30)
 
     if verbose:
         print(f"=== Running scenario: {name} ({config_path}) ===")
 
-    drc_df = utils.load_data(config, connectivity=connectivity, bbox=bbox)
+    drc_df = utils.load_data(config, bbox=bbox)
 
     # Thematically weighted multi-objective score
     weights = utils.compute_weights(config)
@@ -78,9 +81,10 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
                     show=False, output_dir=output_dir)
 
     # Optimize
-    model, x = utils.setup_model(drc_df, protection_frac=protection_frac, connectivity=connectivity)
-    drc_df = utils.solve_model(model, x, drc_df, threads=threads, time_limit=time_limit,
-                               gap_rel=solver_cfg.get("gap_rel", 0.001))
+    edges = conn.rook_edges(drc_df, config["data"].get("cell_size", 1000))
+    drc_df, solve_info = solve(drc_df, edges, weight, method, protection_frac, solver_cfg,
+                               threads=threads, time_limit=time_limit, verbose=verbose)
+    patches = conn.patch_metrics(drc_df["selected"].to_numpy() > 0.5, edges)
 
     used_area = float((drc_df["area"] * drc_df["selected"]).sum())
     total_area = float(drc_df["area"].sum())
@@ -118,14 +122,15 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
         "species": utils.species_included(config),
         "priority": ";".join(f"{k}x{v:g}" for k, v in (config["weighting"].get("priority") or {}).items()) or "none",
         "subset": "full" if bbox is None else "bbox",
-        "status": LpStatus[model.status],
-        "objective": value(model.objective),
+        "connectivity_weight": weight,
+        **solve_info,
         "total_area_km2": total_area,
         "baseline_area_km2": baseline_area,
         "selected_area_km2": used_area,
         "selected_pct": used_area / total_area * 100 if total_area else float("nan"),
         "n_candidates": int(drc_df["candidate"].sum()),
         **oil,
+        **patches,
         "max_weight_sum": float(weights.loc[weights["direction"] > 0, "weight"].sum()),
         "min_weight_sum": float(weights.loc[weights["direction"] < 0, "weight"].sum()),
         **diag,
@@ -133,3 +138,37 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
     }
     utils.upsert_summary(row, Path(output_dir) / "scenario_summary.csv")
     return row
+
+
+def solve(df, edges, weight, method, protection_frac, solver_cfg, threads=None, time_limit=None,
+          verbose=True):
+    """
+    Solve the selection with the chosen method ("mincut" or "cbc") and add the
+    "selected" column to df. Both methods optimize the same objective
+    (scripts.connectivity.objective_value).
+    Returns (df, info) where info has solver, status, objective and, for
+    min-cut, upper_bound / gap_rel / unused_area.
+    """
+
+    candidate = df["candidate"].to_numpy() == 1
+    score = df["objective_score"].to_numpy()
+    if method == "mincut":
+        selected, info = conn.solve_mincut(df, edges, weight, protection_frac=protection_frac,
+                                           scale=float(solver_cfg.get("mincut_scale", 1e6)),
+                                           tol=float(solver_cfg.get("mincut_tol", 1e-6)),
+                                           verbose=verbose)
+        df["selected"] = selected.astype(float)
+        info["status"] = "Optimal" if info["gap_rel"] <= solver_cfg.get("gap_rel", 0.001) else "Feasible"
+        return df, info
+    if method == "cbc":
+        start = time.time()
+        model, x = utils.setup_model(df, protection_frac=protection_frac,
+                                     connectivity_weight=weight, edges=edges)
+        df = utils.solve_model(model, x, df, threads=threads or solver_cfg.get("threads", 4),
+                               time_limit=time_limit or solver_cfg.get("time_limit", 2000),
+                               gap_rel=solver_cfg.get("gap_rel", 0.001))
+        selected = df["selected"].to_numpy() > 0.5
+        return df, {"solver": "cbc", "status": LpStatus[model.status],
+                    "objective": conn.objective_value(score, selected, candidate, edges, weight),
+                    "solve_sec": round(time.time() - start, 1)}
+    raise ValueError(f"Unknown solver method: {method!r} (use 'mincut' or 'cbc')")

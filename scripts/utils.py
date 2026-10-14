@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from pulp import LpProblem, LpVariable, LpMaximize, lpSum, LpBinary, PULP_CBC_CMD, LpStatus
+from pulp import LpProblem, LpVariable, LpMaximize, LpAffineExpression, LpBinary, PULP_CBC_CMD, LpStatus
 import pyarrow.parquet as pq
 import rasterio
 from rasterio.transform import Affine
@@ -165,12 +165,10 @@ def compute_weights(config, species_available=None):
     return weights
 
 
-def required_columns(config, connectivity=True):
+def required_columns(config):
     """Columns of the planning-unit table needed to run a scenario."""
     weights = compute_weights(config)
     cols = list(ID_COLS)
-    if connectivity:
-        cols.append("neighbors")
     cols += list(config["data"]["protected_classes"])
     cols += [c for c, _ in constraint_cols(config)]
     cols += [c for c in weights["column"] if c != SPECIES_COL]
@@ -313,7 +311,7 @@ def summarize_species_table(table_path, star_path=None):
     return sp
 
 
-def load_data(config, connectivity=True, bbox=None):
+def load_data(config, bbox=None):
     """
     Load the planning units needed by a scenario, add metadata columns and,
     if the scenario uses species, the per-cell STAR total.
@@ -324,8 +322,6 @@ def load_data(config, connectivity=True, bbox=None):
           - data.file_path: planning-unit table (Parquet or CSV)
           - data.protected_classes / data.protected_th: baseline definition
           - species.include / species.star_path: STAR species layer
-    connectivity : bool, optional
-        Whether to read the `neighbors` column used by the connectivity term.
     bbox : dict, optional
         Spatial subset in native coordinates (see read_planning_units).
     Returns
@@ -341,7 +337,7 @@ def load_data(config, connectivity=True, bbox=None):
     """
 
     df = read_planning_units(config["data"]["file_path"],
-                             required_columns(config, connectivity=connectivity), bbox=bbox)
+                             required_columns(config), bbox=bbox)
     df["area"] = 1
     protected_classes = config["data"]["protected_classes"]
     protected_th = config["data"]["protected_th"]
@@ -522,35 +518,35 @@ def iden_units(df, config):
 # Optimization
 # ---------------------------------------------------------------------------
 
-def setup_model(df, protection_frac = 0.30, connectivity = True):
+def setup_model(df, protection_frac=0.30, connectivity_weight=0.0, edges=None):
     """
-    Set up a linear programming optimization model for a conservation protection planning problem.
-    This function creates an integer linear programming model that maximizes the total objective score
-    of protected areas while respecting area budget constraints. It optionally includes a connectivity
-    bonus to encourage protection of neighboring areas.
+    Set up the integer linear programming model (CBC path) for the protection planning problem.
+    The model maximizes the total objective score of selected units, plus an
+    optional connectivity reward for adjacent selected pairs, subject to the
+    area cap. The same problem is solved exactly and much faster by
+    scripts.connectivity.solve_mincut; this CBC formulation is kept for
+    verification on subsets and for scenarios needing extra constraints.
     Args:
-        df (pandas.DataFrame): A DataFrame containing candidate areas with the following required columns:
-            - "candidate" (int): Binary indicator (1 = candidate for protection, 0 = not candidate)
-            - "objective_score" (float): Score to maximize for each candidate area
-            - "protected" (bool/int): Binary indicator of already-protected areas (1 = protected, 0 = not)
-            - "neighbors" (list): List of neighboring area indices for connectivity calculation
-            - "area" (numeric): Area size of each candidate (will be coerced to float)
+        df (pandas.DataFrame): Planning units with columns:
+            - "candidate" (int): 1 = candidate for protection, 0 = not candidate
+            - "objective_score" (float): Score to maximize for each unit
+            - "protected" (int): 1 = baseline unit (fixed to selected)
+            - "area" (numeric): Area of each unit (coerced to float)
         protection_frac (float, optional): Fraction of total area that can be protected. Default is 0.30 (30%).
-        connectivity (bool, optional): If True, adds a connectivity bonus to the objective function
-            that incentivizes protection of adjacent areas. Default is True.
+        connectivity_weight (float, optional): Reward w per pair of adjacent selected units. Default 0 (off).
+        edges (numpy.ndarray, optional): Rook adjacency from scripts.connectivity.rook_edges,
+            positional indices into df. Required when connectivity_weight > 0.
     Returns:
-        tuple: A tuple containing:
-            - model (LpProblem): The configured optimization model (maximization)
-            - x (dict): Dictionary mapping candidate indices to binary decision variables
+        tuple: (model, x) with the PuLP problem and a dict of binary decision variables
+        keyed by the df index of each candidate.
     Notes:
-        - Already-protected areas are fixed to be protected (x[i] = 1)
-        - Connectivity weight is set to 0.5 when connectivity is enabled
-        - Double-counting of edges is prevented by only considering pairs where i < j
-        - Area column values are coerced to float and missing values filled with 0.0
-        - The `neighbors` column is read from file as a string (e.g. "[4.0, 5.0]"),
-          so the loop below iterates over characters and the connectivity bonus is
-          currently always empty. This is the behaviour of the original model and
-          is kept unchanged pending a decision (see README, "Known issues").
+        - Baseline units are fixed to be selected (x[i] = 1).
+        - For each pair of adjacent free candidates a continuous y_ij with
+          y_ij <= x_i and y_ij <= x_j earns w (the objective is maximized, so
+          y_ij = x_i * x_j at the optimum). A pair of a free candidate and a
+          baseline unit is a fixed bonus w on the free unit; pairs of two
+          baseline units are a constant w each (kept so the objective matches
+          scripts.connectivity.objective_value).
     """
 
     candid_idx = df[df["candidate"]==1].index
@@ -561,23 +557,31 @@ def setup_model(df, protection_frac = 0.30, connectivity = True):
     # Problem
     model = LpProblem("30x30_Protection_Plan", LpMaximize)
 
-    objective_expr = lpSum(df.loc[i, "objective_score"] * x[i] for i in candid_idx)
+    score = df["objective_score"]
+    terms = [(x[i], float(score.at[i])) for i in candid_idx]
+    constant = 0.0
 
-    if connectivity:
-        connectivity_weight = 0.5
-        connectivity_bonus = lpSum(
-            connectivity_weight * (x[i] + x[j])
-            for i in candid_idx
-            for j in (df.at[i, "neighbors"])
-            if j in candid_idx and i < j   # prevents double counting
-        )
-        objective_expr += connectivity_bonus
+    if connectivity_weight:
+        assert edges is not None, "edges are required when connectivity_weight > 0"
+        idx = df.index.to_numpy()
+        candidate = df["candidate"].to_numpy() == 1
+        protected = (df["protected"].to_numpy() == 1) & candidate
+        ce = edges[candidate[edges[:, 0]] & candidate[edges[:, 1]]]
+        pa, pb = protected[ce[:, 0]], protected[ce[:, 1]]
+        constant += connectivity_weight * float((pa & pb).sum())
+        for k in np.r_[ce[pa & ~pb, 1], ce[~pa & pb, 0]]:
+            terms.append((x[idx[k]], connectivity_weight))
+        for n, (i, j) in enumerate(ce[~pa & ~pb]):
+            y = LpVariable(f"y_{n}", 0, 1)
+            terms.append((y, connectivity_weight))
+            model += y - x[idx[i]] <= 0
+            model += y - x[idx[j]] <= 0
 
-    model += objective_expr, "CompositeScore_WithConnectivity"
+    model += LpAffineExpression(terms, constant=constant), "CompositeScore_WithConnectivity"
 
     #  Fix already-protected areas
     for i in candid_idx:
-        if bool(df.loc[i, "protected"]):
+        if bool(df.at[i, "protected"]):
             x[i].lowBound = 1
             x[i].upBound  = 1
 
@@ -585,7 +589,8 @@ def setup_model(df, protection_frac = 0.30, connectivity = True):
     assert "area" in df.columns
     df["area"] = pd.to_numeric(df["area"], errors="coerce").fillna(0.0)
     total_area = float(df["area"].sum())
-    model += lpSum(df.loc[i, "area"] * x[i] for i in candid_idx) <= protection_frac * total_area, "AreaBudget"
+    model += LpAffineExpression([(x[i], float(df.at[i, "area"])) for i in candid_idx]) \
+        <= protection_frac * total_area, "AreaBudget"
     return model, x
 
 

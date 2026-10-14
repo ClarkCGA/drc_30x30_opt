@@ -60,12 +60,17 @@ For each baseline:
 
 Config files are `01`–`10_config_<baseline>_<variant>.yml` (e.g. `01_config_pas_baseline_balanced.yml`, `02_config_pas_cfcl_baseline_balanced.yml`), and scenario names follow `"<baseline> - <variant>"` (e.g. `PAs+CFCLs as baseline - Biodiversity x2`); output files are named after the scenario name.
 
-### Exclusions, area cap and solver
+### Exclusions, area cap, connectivity and solver
 - Exclusion rules (`configs/common/defaults.yml`): urban/peri-urban/rural settlement classes and TMF deforested/degraded above thresholds; plus CFCL > 30% in the *PAs as baseline* runs. Oil blocks are **not** excluded.
-- Area cap: 30% of the total area (baseline included). CBC via PuLP, 2000 s time limit, 0.1% relative gap.
+- Area cap: 30% of the total area (baseline included). Baseline units are locked in.
+- Connectivity (all scenarios): a reward of `w` = 0.25 (score units, `optimization.connectivity.weight` in `configs/common/defaults.yml`; 0 disables it) for every pair of selected units sharing a 1 km edge (rook adjacency built from `x_native`/`y_native`). A pair of a candidate and a baseline unit is a fixed bonus on the candidate, so new areas are also drawn towards existing baseline areas.
+- Solver (`optimization.solver.method`):
+  - `mincut` (default): exact parametric min-cut (scipy). The area cap is handled by a price per km², bisected until the selection fits; a greedy fill then uses the remaining budget, and the Lagrangian bound gives the remaining gap (reported as `gap_rel` / `upper_bound` in `scenario_summary.csv`; status "Optimal" when the gap is ≤ 0.1%). Full grid: ~1 minute, ~5.5 GB RAM.
+  - `cbc`: the same objective as an integer program in PuLP/CBC (y_ij ≤ x_i, y_ij ≤ x_j per adjacent pair), 2000 s time limit, 0.1% relative gap. Only practical on subsets when connectivity is on; kept for verification (`scripts/test_pipeline.py` cross-checks both solvers on a subset) and for future scenarios that need constraints min-cut cannot express.
+  - Limits of min-cut: one area cap and non-negative pair rewards only. Per-province budgets, per-theme or species targets, or patch-size rules would need the CBC path (on reduced problems). See [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md).
 
 ### Outputs
-In `output/`, per scenario: `<name>.png/.tif` (selected areas), `<name> - Baseline Areas.png/.tif`, `<name> - Objective Score.png`, `<name> - Candidates.png`. `scenario_summary.csv` has one row per scenario: areas, newly selected area inside oil blocks (km², area-weighted by `oil_frac`, and % of the newly selected area), and score diagnostics (score distribution, number of eligible cells, share of cells where the minimize side outweighs the maximize side). `visualize_consensus.ipynb` writes `consensus_map.png/.tif`: the number of runs (out of 10) that newly select each unit, with baseline units as a separate class and oil-block outlines overlaid.
+In `output/`, per scenario: `<name>.png/.tif` (selected areas), `<name> - Baseline Areas.png/.tif`, `<name> - Objective Score.png`, `<name> - Candidates.png`. `scenario_summary.csv` has one row per scenario: areas, newly selected area inside oil blocks (km², area-weighted by `oil_frac`, and % of the newly selected area), solver information (solver, status, objective, upper bound and gap), fragmentation (number of patches, single-cell patches, boundary edges), and score diagnostics (score distribution, number of eligible cells, share of cells where the minimize side outweighs the maximize side). `visualize_consensus.ipynb` writes `consensus_map.png/.tif`: the number of runs (out of 10) that newly select each unit, with baseline units as a separate class and oil-block outlines overlaid.
 
 ## Configurations
 Each scenario config in `configs/` `extends` two shared files, which are merged first:
@@ -111,11 +116,12 @@ After running the optimization for all (or a selection of) the configurations, y
 ```bash
 python -m scripts.make_dummy_star                       # synthetic STAR Parquet in data/star_dummy/ (gitignored)
 python -m scripts.test_pipeline --out-dir output_test   # weight/reader checks, full-grid score diagnostics,
-                                                        # end-to-end runs of all 10 scenarios on a 150 x 150 km subset + consensus map
+                                                        # min-cut vs CBC cross-check, end-to-end runs of all 10 scenarios
+                                                        # on a 150 x 150 km subset + consensus map
 ```
 
 ## Known issues
-- **Connectivity bonus is inactive.** `neighbors` is stored as a string (e.g. `"[4.0, 5.0]"`), so the connectivity term in `setup_model` iterates over characters and never adds a bonus. This is the behaviour of all runs so far. A fix (reward for adjacent selected pairs, solved by parametric min-cut) is approved in principle and not yet implemented. Note also that the term as written, 0.5·(x_i + x_j) per neighbour pair, is linear: it rewards units by their number of candidate neighbours rather than rewarding adjacent selections.
+- The original connectivity bonus never worked (`neighbors` was read as text, so no neighbour was ever matched; the term was also linear and rewarded neighbour counts, not adjacent selections). It has been replaced by the pairwise reward above, and the `neighbors` column is no longer read; all runs before this change had no connectivity effect.
 - The anthropogenic pressure layers stop at ~6°S (27.7% of cells missing) and `mean_climate_vulnerability` covers only 31.7% of cells (also nothing south of ~6°S, and mostly the forest block further north). Missing cells are filled with the median, so they are neutral rather than "no pressure"; see [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md).
 - `pop_sum` has a few negative values (-200, -400) and is so skewed that after rescaling it is ~0 almost everywhere; `mean_MarinePressure` is likewise ~0 almost everywhere.
 

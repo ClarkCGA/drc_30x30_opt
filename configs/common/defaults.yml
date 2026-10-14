@@ -6,6 +6,8 @@ data:
   # If the Parquet file is missing, the CSV with the same name is read instead.
   file_path: "data/drc_1km_data_planning_units.parquet"
   protected_th: 0.8
+  # Planning-unit size (m); used to build the rook adjacency from x_native/y_native.
+  cell_size: 1000
 
 species:
   # STAR species layer: wide Parquet keyed by grid_id with one sp_<id_no>
@@ -21,11 +23,26 @@ species:
 
 optimization:
   protection_frac: 0.30
-  connectivity: true
+
+  # Connectivity: reward (in score units) for every pair of adjacent selected
+  # planning units (sharing a 1 km edge). 0 disables it. w = 0.25 roughly
+  # halves the outer boundary of the selection for ~1.3% of the theme score
+  # (see docs/METHODS_NOTES.md).
+  connectivity:
+    weight: 0.25
+
   solver:
+    # "mincut": exact parametric min-cut (scipy), handles the full grid.
+    # "cbc": PuLP/CBC integer program (same objective); only practical on
+    #        subsets when connectivity is on, kept for verification.
+    method: "mincut"
+    # CBC settings
     time_limit: 2000
     gap_rel: 0.001
     threads: 20
+    # Min-cut settings: score resolution (1/scale) and bisection tolerance
+    mincut_scale: 1000000
+    mincut_tol: 0.000001
 
   # Exclusion rules shared by all scenarios: a planning unit is ineligible
   # when the column value exceeds the threshold. Oil blocks are NOT excluded
