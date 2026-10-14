@@ -17,7 +17,7 @@ If you are running this on Windows, it's recommended to run it inside Windows Su
   python -m scripts.convert_to_parquet   # writes data/drc_1km_data_planning_units.parquet
   ```
   (If the Parquet file is missing, the CSV is read instead, with column selection.) The legacy column `cf_frac` is read as `cfcl_frac` (CFCL = Concession Forestière de Communauté Locale, Local Community Forest Concession).
-- **STAR species layer**: produced by the STAR pipeline in `drc_30x30_data_prep`: a wide Parquet keyed by `grid_id` with one `sp_<id_no>` column per species (per-cell STAR values, already including the IUCN category weight), plus a species table (`id_no`, name, class, category, weight, global km², DRC km², source). Default paths: `data/star/star_1km_species.parquet` and `data/star/star_species.csv` (set in `configs/common/defaults.yml`, or override with the `DRC_STAR_PATH` / `DRC_STAR_SPECIES_TABLE` environment variables). The species columns are summed per cell into a single STAR total in row-group/column batches, so the ~4,000 columns are never loaded at once.
+- **STAR species layer**: produced by the STAR pipeline in `drc_30x30_data_prep`: a wide Parquet keyed by `grid_id` with one `sp_<id_no>` column per species (per-cell STAR values, already including the IUCN category weight), plus a species table (`id_no`, name, class, category, weight, global km², DRC km², source). Default paths: `../drc_30x30_data_prep/output/star/star_1km_species.parquet` and `star_species.csv` next to it, i.e. the data-prep repository checked out next to this one (set in `configs/common/defaults.yml`, or override with the `DRC_STAR_PATH` / `DRC_STAR_SPECIES_TABLE` environment variables; in Docker, mount the STAR folder and set `DRC_STAR_PATH`). The species columns are summed per cell into a single STAR total in row-group/column batches, so the ~4,000 columns are never loaded at once.
 
 ## Scenario design
 
@@ -103,7 +103,7 @@ This will print out the URL to the Jupyter Lab (including its token). Copy the U
 
 ### 4. Prepare the Data
 
-Convert the planning-unit CSV to Parquet once (`python -m scripts.convert_to_parquet`) and place the STAR outputs under `data/star/` (or set `DRC_STAR_PATH`).
+Convert the planning-unit CSV to Parquet once (`python -m scripts.convert_to_parquet`). The STAR outputs are read from the data-prep repository next to this one (or set `DRC_STAR_PATH`).
 
 ### 5. Execute the Tool 
 
