@@ -41,12 +41,11 @@ All layers are grouped into seven themes (`configs/common/themes.yml`):
 | Conservation priorities & spatial planning | `mean_GCP_Dinerstein`, `gc_frac` | |
 
 ### Weighting
-- Every layer is rescaled to 0-1 (min-max); no-data cells are set to 0 before rescaling.
-- Balancing applies **only to maximize layers**: each theme gets a share of 1 (2 in its priority run), split equally across the theme's maximize layers.
+- Every layer is rescaled to 0-1 (min-max) after no-data cells are filled: with the median of the observed cells for `mean_Anthropogenic_current_pressure`, `mean_Anthropogenic_future_pressure` and `mean_climate_vulnerability` (large coverage gaps, see [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md)), and with 0 for all other layers. The rule is set under `fill_na` in `configs/common/themes.yml`.
+- Both sides are balanced per theme: each theme gets a share of 1 (2 in its priority run) on the maximize side, split equally across its maximize layers, and separately a share of 1 (2 in its priority run) on the minimize side, split equally across its minimize layers. A theme with no layers on one side contributes 0 on that side.
 - Biodiversity is split 50% KBA / 50% species. The species half is the per-cell sum of the STAR values (which already include the category weights), so species contribute in proportion to their STAR values. In runs without species, KBA gets the full Biodiversity share.
-- Minimize layers are not balanced: each has weight 1.0 and is subtracted. In a theme's priority run, its minimize layers are also multiplied (×2), e.g. the six Ecological integrity minimize layers get weight 2.0 each in the *Ecological integrity x2* runs.
 - Score per cell = Σ(weight × rescaled maximize layer) − Σ(weight × rescaled minimize layer). Units with score ≤ 0 or failing an exclusion rule are not candidates (baseline units are always included).
-- Climate adaptation has no maximize layer, so in practice the maximize side sums to 6 (7 in a priority run) and the minimize side to 10 (16 in the *Ecological integrity x2* runs; still 10 in the Biodiversity and Climate mitigation x2 runs, as those themes have no minimize layers).
+- Six themes have maximize layers and three (Ecological integrity, Climate adaptation, Freshwater) have minimize layers, so the maximize side sums to 6 (7 in a priority run) and the minimize side to 3 (4 in the *Ecological integrity x2* runs; still 3 in the Biodiversity and Climate mitigation x2 runs, as those themes have no minimize layers). E.g. in the balanced runs each Ecological integrity minimize layer has weight 1/6, each Freshwater minimize layer 1/3, and `mean_climate_vulnerability` 1.
 
 ### Scenarios (`configs/`)
 For each baseline:
@@ -56,7 +55,7 @@ For each baseline:
 | Balanced | yes | none |
 | Balanced, no species | no | none |
 | Biodiversity x2 | yes | Biodiversity share 2 |
-| Ecological integrity x2 | yes | Ecological integrity share 2, its minimize layers ×2 |
+| Ecological integrity x2 | yes | Ecological integrity share 2 (maximize and minimize sides) |
 | Climate mitigation x2 | yes | Climate mitigation share 2 |
 
 Config files are `01`–`10_config_<baseline>_<variant>.yml` (e.g. `01_config_pas_baseline_balanced.yml`, `02_config_pas_cfcl_baseline_balanced.yml`), and scenario names follow `"<baseline> - <variant>"` (e.g. `PAs+CFCLs as baseline - Biodiversity x2`); output files are named after the scenario name.
@@ -116,8 +115,8 @@ python -m scripts.test_pipeline --out-dir output_test   # weight/reader checks, 
 ```
 
 ## Known issues
-- **Connectivity bonus is inactive.** `neighbors` is stored as a string (e.g. `"[4.0, 5.0]"`), so the connectivity term in `setup_model` iterates over characters and never adds a bonus. This is the behaviour of all runs so far and is kept unchanged pending a decision. Note also that the term as written, 0.5·(x_i + x_j) per neighbour pair, is linear: it rewards units by their number of candidate neighbours rather than rewarding adjacent selections.
-- Several layers have large no-data areas that are set to 0 before rescaling, e.g. `mean_climate_vulnerability` (~68% of cells; range -0.42 to 1.44, so filled cells sit at ~0.23 after rescaling rather than at the best value) and the anthropogenic pressure layers (~28% of cells, 0 = no pressure).
+- **Connectivity bonus is inactive.** `neighbors` is stored as a string (e.g. `"[4.0, 5.0]"`), so the connectivity term in `setup_model` iterates over characters and never adds a bonus. This is the behaviour of all runs so far. A fix (reward for adjacent selected pairs, solved by parametric min-cut) is approved in principle and not yet implemented. Note also that the term as written, 0.5·(x_i + x_j) per neighbour pair, is linear: it rewards units by their number of candidate neighbours rather than rewarding adjacent selections.
+- The anthropogenic pressure layers stop at ~6°S (27.7% of cells missing) and `mean_climate_vulnerability` covers only 31.7% of cells (also nothing south of ~6°S, and mostly the forest block further north). Missing cells are filled with the median, so they are neutral rather than "no pressure"; see [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md).
 - `pop_sum` has a few negative values (-200, -400) and is so skewed that after rescaling it is ~0 almost everywhere; `mean_MarinePressure` is likewise ~0 almost everywhere.
 
 

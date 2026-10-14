@@ -30,13 +30,15 @@ def check_weights(config_paths):
         c = utils.load_config(p)
         w = utils.compute_weights(c)
         prio = c["weighting"].get("priority") or {}
-        mx = w[w["direction"] > 0].groupby("theme")["weight"].sum()
-        for theme, share in mx.items():
-            expected = float(prio.get(theme, 1.0))
-            assert np.isclose(share, expected), f"{p}: theme {theme} share {share} != {expected}"
-        mn = w[w["direction"] < 0]
-        expected_min = mn["theme"].map(lambda t: float(prio.get(t, 1.0)))
-        assert np.allclose(mn["weight"], expected_min), f"{p}: minimize weights != priority multiplier"
+        for direction in (1.0, -1.0):
+            side = w[w["direction"] == direction].groupby("theme")["weight"].sum()
+            for theme, share in side.items():
+                expected = float(prio.get(theme, 1.0))
+                assert np.isclose(share, expected), f"{p}: theme {theme} side {direction:+g} share {share} != {expected}"
+            for theme, layers in c["themes"].items():
+                key = "maximize" if direction > 0 else "minimize"
+                if not layers.get(key):
+                    assert theme not in side.index, f"{p}: theme {theme} has no {key} layers but a share"
         bio = w[w["theme"] == "biodiversity"].set_index("column")["weight"]
         if utils.species_included(c):
             assert np.isclose(bio["kba_frac"], bio["star_total"]), f"{p}: KBA/species split not 50/50"

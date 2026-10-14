@@ -104,17 +104,16 @@ def compute_weights(config, species_available=None):
     """
     Build the per-layer weights from the theme definitions.
     Rules:
-      - Balancing applies only to maximize layers. Each theme gets a share of
-        `weighting.base_share` (1.0) times its priority multiplier
-        (`weighting.priority`, e.g. {"biodiversity": 2.0}).
-      - The theme share is split equally across its maximize layers, or
-        according to the theme's explicit `shares` (fractions of the share).
-      - A layer that is unavailable in this run (the STAR species layer in a
-        no-species run) is dropped and the remaining shares are renormalized.
-      - Every minimize layer gets `weighting.minimize_weight` (1.0) times the
-        priority multiplier of its theme (e.g. 2.0 for the Ecological integrity
-        minimize layers in the Ecological integrity x2 run); minimize layers
-        are not balanced across a theme.
+      - Each theme gets a share of `weighting.base_share` (1.0) times its
+        priority multiplier (`weighting.priority`, e.g. {"biodiversity": 2.0}),
+        on the maximize side and, separately, on the minimize side.
+      - The maximize share is split equally across the theme's maximize
+        layers, or according to the theme's explicit `shares` (fractions of
+        the share). A layer that is unavailable in this run (the STAR species
+        layer in a no-species run) is dropped and the remaining shares are
+        renormalized.
+      - The minimize share is split equally across the theme's minimize layers.
+      - A theme without layers on one side contributes 0 on that side.
     Parameters
     ----------
     config : dict
@@ -134,7 +133,6 @@ def compute_weights(config, species_available=None):
     themes = config["themes"]
     w_cfg = config.get("weighting", {})
     base_share = float(w_cfg.get("base_share", 1.0))
-    minimize_weight = float(w_cfg.get("minimize_weight", 1.0))
     priority = w_cfg.get("priority") or {}
 
     unknown = set(priority) - set(themes)
@@ -156,9 +154,10 @@ def compute_weights(config, species_available=None):
         for c in max_cols:
             rows.append({"theme": key, "column": c, "direction": 1.0,
                          "weight": share * raw[c] / total, "theme_share": share})
-        for c in theme.get("minimize", []):
+        min_cols = theme.get("minimize", [])
+        for c in min_cols:
             rows.append({"theme": key, "column": c, "direction": -1.0,
-                         "weight": minimize_weight * multiplier, "theme_share": np.nan})
+                         "weight": share / len(min_cols), "theme_share": share})
 
     weights = pd.DataFrame(rows)
     dup = weights["column"][weights["column"].duplicated()].tolist()
@@ -361,13 +360,31 @@ def load_data(config, connectivity=True, bbox=None):
 
 def pre_process_data(df, config):
     """
-    Set no-data (NaN or non-numeric) cells of all scored layers to 0.0.
-    This covers every maximize/minimize layer of the theme definitions
-    (previously a hand-maintained `pre_process` list in each config).
+    Fill no-data (NaN or non-numeric) cells of all scored layers.
+    The rule per layer comes from `fill_na` (configs/common/themes.yml):
+    `fill_na.columns` maps a layer to a number, "median" or "mean" (computed
+    over the layer's non-missing cells in df, i.e. the full grid in normal
+    runs); every other scored layer gets `fill_na.default` (0.0). See
+    docs/METHODS_NOTES.md for the rationale.
     """
 
+    fill = config.get("fill_na", {})
+    default = fill.get("default", 0.0)
+    rules = fill.get("columns") or {}
     cols = [c for c in compute_weights(config)["column"] if c in df.columns]
-    df[cols] = df[cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    df[cols] = df[cols].apply(pd.to_numeric, errors="coerce")
+    for c in cols:
+        rule = rules.get(c, default)
+        if rule == "median":
+            value = df[c].median()
+        elif rule == "mean":
+            value = df[c].mean()
+        else:
+            value = float(rule)
+        n_missing = int(df[c].isna().sum())
+        if n_missing and c in rules:
+            print(f"{c}: {n_missing:,} missing cells ({n_missing / len(df):.1%}) filled with {rule} = {value:.4g}")
+        df[c] = df[c].fillna(value)
     return df
 
 

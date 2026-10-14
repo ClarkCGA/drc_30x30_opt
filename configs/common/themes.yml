@@ -1,16 +1,16 @@
 # Thematic grouping of optimization layers (shared by every scenario config).
 #
 # Balancing rules (applied in scripts/utils.py::compute_weights):
-#   - Balancing applies ONLY to maximize layers.
-#   - Each theme gets a share of `weighting.base_share` (1.0), multiplied by the scenario's
+#   - Each theme gets a share of `weighting.base_share` (1.0) on the maximize
+#     side and, separately, on the minimize side, multiplied by the scenario's
 #     priority multiplier for that theme (e.g. 2.0 in its priority run).
-#   - A theme's share is split equally across its maximize layers, unless the
-#     theme lists explicit `shares` (fractions of the theme share).
+#   - A theme's maximize share is split equally across its maximize layers,
+#     unless the theme lists explicit `shares` (fractions of the theme share).
+#   - A theme's minimize share is split equally across its minimize layers.
+#   - A theme without layers on one side contributes 0 on that side.
 #   - A layer that is unavailable in a run (e.g. the STAR species layer in a
 #     no-species run) is dropped and the remaining shares are renormalized,
 #     so KBA receives the full Biodiversity share when species are excluded.
-#   - Minimize layers are NOT balanced: each gets `weighting.minimize_weight` (1.0),
-#     times the theme's priority multiplier in its priority run (e.g. 2.0).
 #   - Scenario configs set priority multipliers under `weighting.priority`,
 #     e.g. {biodiversity: 2.0}.
 #   - All layers are rescaled to 0-1 (min-max) before weighting.
@@ -21,7 +21,17 @@
 
 weighting:
   base_share: 1.0
-  minimize_weight: 1.0
+
+# No-data handling for the scored layers (scripts/utils.py::pre_process_data):
+# `default` applies to every layer not listed under `columns`; a value can be
+# a number, "median" or "mean" (over the layer's non-missing cells). See
+# docs/METHODS_NOTES.md for the coverage facts behind these choices.
+fill_na:
+  default: 0.0
+  columns:
+    mean_Anthropogenic_current_pressure: "median"
+    mean_Anthropogenic_future_pressure: "median"
+    mean_climate_vulnerability: "median"
 
 themes:
   biodiversity:
