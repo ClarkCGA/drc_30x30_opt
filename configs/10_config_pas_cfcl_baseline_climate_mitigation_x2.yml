@@ -1,0 +1,27 @@
+# DRC 30x30 spatial optimization scenario 10
+# Baseline = existing protected areas (PAs) + CFCLs (Concessions Forestieres de
+# Communautes Locales, Local Community Forest Concessions), assuming all CFCLs are
+# eventually recognized as OECMs. Both count towards 30% and are locked in.
+# Climate mitigation (carbon) theme share doubled, with species.
+
+extends:
+- "configs/common/defaults.yml"
+- "configs/common/themes.yml"
+
+name: "PAs+CFCLs as baseline - Climate mitigation x2"
+baseline: "PAs+CFCLs as baseline"
+
+data:
+  protected_classes:
+  - "protected_frac"
+  - "cfcl_frac"
+
+species:
+  include: true
+
+weighting:
+  priority:
+    climate_mitigation: 2.0
+
+optimization:
+  extra_constraint_cols: []

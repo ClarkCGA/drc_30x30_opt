@@ -4,3 +4,5 @@ numpy==1.26.4
 jupyterlab==4.4.4
 matplotlib==3.10.3
 rasterio==1.4.3
+pyarrow==17.0.0
+pyyaml==6.0.2

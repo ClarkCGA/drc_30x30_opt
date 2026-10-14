@@ -2,3 +2,11 @@
 .DS_Store?
 *.ipynb_checkpoints/
 *__pycache__/
+
+# Large / generated data (not tracked)
+data/drc_1km_data_planning_units.csv
+data/drc_1km_data_planning_units.parquet
+data/star/
+# Synthetic STAR test data (scripts/make_dummy_star.py)
+data/star_dummy/
+output_test/

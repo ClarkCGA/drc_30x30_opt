@@ -1,71 +1,667 @@
 import os
+import copy
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pulp import LpProblem, LpVariable, LpMaximize, lpSum, LpBinary, PULP_CBC_CMD, LpStatus
-from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+import pyarrow.parquet as pq
 import rasterio
 from rasterio.transform import Affine
 from rasterio.crs import CRS
 import re
+import yaml
 
-def load_data(config, preprocess = True):
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Legacy input column names -> names used in the code.
+# CFCL = Concession Forestiere de Communaute Locale (Local Community Forest Concession).
+COLUMN_RENAMES = {"cf_frac": "cfcl_frac"}
+
+# Per-cell STAR total (sum of the sp_<id_no> columns of the STAR Parquet).
+SPECIES_COL = "star_total"
+SPECIES_PREFIX = "sp_"
+
+# Columns always read from the planning-unit table.
+ID_COLS = ["grid_id", "x_native", "y_native"]
+OIL_COL = "oil_frac"
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+def _resolve(path):
+    """Resolve a path relative to the repository root (absolute paths are kept)."""
+    p = Path(path)
+    return p if p.is_absolute() else REPO_ROOT / p
+
+
+def _deep_merge(base, override):
+    """Recursively merge `override` into a copy of `base` (dicts merge, everything else replaces)."""
+    out = copy.deepcopy(base)
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def load_config(config_path):
     """
-    Load a CSV into a pandas DataFrame, add metadata columns, and optionally preprocess it.
+    Load a scenario config and merge in the shared files it `extends`.
+    Each file listed under `extends` (paths relative to the repository root) is
+    deep-merged in order, and the scenario's own keys are merged last so they
+    take precedence. The environment variables DRC_STAR_PATH and
+    DRC_STAR_SPECIES_TABLE, when set, override species.star_path and
+    species.species_table. The shared files hold the theme definitions
+    (configs/common/themes.yml) and the defaults common to all scenarios
+    (configs/common/defaults.yml: data paths, exclusion rules, solver settings).
+    Parameters
+    ----------
+    config_path : str or Path
+        Path to the scenario YAML file.
+    Returns
+    -------
+    dict
+        The merged configuration.
+    """
+
+    with open(config_path, "r") as f:
+        scenario = yaml.safe_load(f) or {}
+
+    config = {}
+    for extra in scenario.get("extends", []):
+        with open(_resolve(extra), "r") as f:
+            config = _deep_merge(config, yaml.safe_load(f) or {})
+    config = _deep_merge(config, {k: v for k, v in scenario.items() if k != "extends"})
+    config["config_path"] = str(config_path)
+
+    # Environment overrides for the STAR inputs (e.g. to point at a test file).
+    for env, key in (("DRC_STAR_PATH", "star_path"), ("DRC_STAR_SPECIES_TABLE", "species_table")):
+        if os.environ.get(env):
+            config.setdefault("species", {})[key] = os.environ[env]
+    return config
+
+
+def species_included(config):
+    """True when the scenario uses the STAR species layer."""
+    return bool(config.get("species", {}).get("include", False))
+
+
+def constraint_cols(config):
+    """Exclusion rules: shared `constraint_cols` plus the scenario's `extra_constraint_cols`."""
+    opt = config["optimization"]
+    return list(opt.get("constraint_cols", [])) + list(opt.get("extra_constraint_cols", []))
+
+
+# ---------------------------------------------------------------------------
+# Thematic weighting
+# ---------------------------------------------------------------------------
+
+def compute_weights(config, species_available=None):
+    """
+    Build the per-layer weights from the theme definitions.
+    Rules:
+      - Balancing applies only to maximize layers. Each theme gets a share of
+        `weighting.base_share` (1.0) times its priority multiplier
+        (`weighting.priority`, e.g. {"biodiversity": 2.0}).
+      - The theme share is split equally across its maximize layers, or
+        according to the theme's explicit `shares` (fractions of the share).
+      - A layer that is unavailable in this run (the STAR species layer in a
+        no-species run) is dropped and the remaining shares are renormalized.
+      - Every minimize layer gets `weighting.minimize_weight` (1.0); minimize
+        layers are not balanced and not affected by priority multipliers.
     Parameters
     ----------
     config : dict
-        Configuration dictionary expected to contain:
-          - data.file_path (str): Path to the CSV file to load.
-          - data.protected_classes (str or list[str]): Column name(s) used to determine protected status.
-          - data.protected_th (number): Threshold used to mark a row as protected when any protected class value exceeds it.
-    preprocess : bool, optional
-        If True (default), the loaded DataFrame is passed to pre_process_data(df, config) before being returned.
+        Merged configuration (see load_config) with `themes` and `weighting`.
+    species_available : bool, optional
+        Whether the STAR species layer is used. Defaults to species_included(config).
     Returns
     -------
     pandas.DataFrame
-        DataFrame loaded from the specified CSV with two additional columns:
-          - "area" (int): constant value 1 for every row.
-          - "protected" (int): binary indicator (0 or 1) set to 1 when any protected class value > protected_th.
+        One row per layer with columns: theme, column, direction (+1 maximize,
+        -1 minimize), weight, theme_share.
     """
 
-    file_path = config["data"]["file_path"]
-    df = pd.read_csv(file_path)
+    if species_available is None:
+        species_available = species_included(config)
+
+    themes = config["themes"]
+    w_cfg = config.get("weighting", {})
+    base_share = float(w_cfg.get("base_share", 1.0))
+    minimize_weight = float(w_cfg.get("minimize_weight", 1.0))
+    priority = w_cfg.get("priority") or {}
+
+    unknown = set(priority) - set(themes)
+    assert not unknown, f"Unknown theme(s) in weighting.priority: {sorted(unknown)}"
+
+    rows = []
+    for key, theme in themes.items():
+        share = base_share * float(priority.get(key, 1.0))
+        max_cols = [c for c in theme.get("maximize", []) if species_available or c != SPECIES_COL]
+        shares = theme.get("shares") or {}
+        if shares:
+            missing = [c for c in max_cols if c not in shares]
+            assert not missing, f"Theme '{key}' lists shares but not for: {missing}"
+            raw = {c: float(shares[c]) for c in max_cols}
+        else:
+            raw = {c: 1.0 for c in max_cols}
+        total = sum(raw.values())
+        for c in max_cols:
+            rows.append({"theme": key, "column": c, "direction": 1.0,
+                         "weight": share * raw[c] / total, "theme_share": share})
+        for c in theme.get("minimize", []):
+            rows.append({"theme": key, "column": c, "direction": -1.0,
+                         "weight": minimize_weight, "theme_share": np.nan})
+
+    weights = pd.DataFrame(rows)
+    dup = weights["column"][weights["column"].duplicated()].tolist()
+    assert not dup, f"Layer(s) assigned to more than one theme/direction: {dup}"
+    return weights
+
+
+def required_columns(config, connectivity=True):
+    """Columns of the planning-unit table needed to run a scenario."""
+    weights = compute_weights(config)
+    cols = list(ID_COLS)
+    if connectivity:
+        cols.append("neighbors")
+    cols += list(config["data"]["protected_classes"])
+    cols += [c for c, _ in constraint_cols(config)]
+    cols += [c for c in weights["column"] if c != SPECIES_COL]
+    cols.append(OIL_COL)
+    return list(dict.fromkeys(cols))  # de-duplicate, keep order
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def read_planning_units(file_path, columns, bbox=None):
+    """
+    Read selected columns of the planning-unit table (Parquet or CSV).
+    Only the requested columns are read. If `file_path` is a .parquet file
+    that does not exist yet but a .csv with the same stem does, the CSV is
+    read instead (convert it once with `python -m scripts.convert_to_parquet`
+    to speed this up). Legacy column names (COLUMN_RENAMES, e.g. cf_frac) are
+    accepted and renamed (to cfcl_frac).
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the planning-unit table.
+    columns : list[str]
+        Column names (new names) to read.
+    bbox : dict, optional
+        Spatial subset in native coordinates: {"xmin", "xmax", "ymin", "ymax"}.
+    Returns
+    -------
+    pandas.DataFrame
+    """
+
+    path = _resolve(file_path)
+    if path.suffix == ".parquet" and not path.exists() and path.with_suffix(".csv").exists():
+        print(f"{path.name} not found; reading {path.with_suffix('.csv').name} instead "
+              f"(run `python -m scripts.convert_to_parquet` once to speed this up)")
+        path = path.with_suffix(".csv")
+
+    if path.suffix == ".parquet":
+        available = pq.ParquetFile(path).schema_arrow.names
+    else:
+        available = pd.read_csv(path, nrows=0).columns.tolist()
+    inverse = {new: old for old, new in COLUMN_RENAMES.items()}
+    read_cols = [c if c in available else inverse.get(c, c) for c in columns]
+    missing = [c for c in read_cols if c not in available]
+    assert not missing, f"Missing columns in {path.name}: {missing}"
+
+    if path.suffix == ".parquet":
+        filters = None
+        if bbox:
+            filters = [("x_native", ">=", bbox["xmin"]), ("x_native", "<=", bbox["xmax"]),
+                       ("y_native", ">=", bbox["ymin"]), ("y_native", "<=", bbox["ymax"])]
+        df = pd.read_parquet(path, columns=read_cols, filters=filters)
+    else:
+        df = pd.read_csv(path, usecols=read_cols)
+        if bbox:
+            df = df[df["x_native"].between(bbox["xmin"], bbox["xmax"])
+                    & df["y_native"].between(bbox["ymin"], bbox["ymax"])]
+    df = df.rename(columns=COLUMN_RENAMES).reset_index(drop=True)
+    df["grid_id"] = df["grid_id"].astype(np.int64)
+    return df
+
+
+def load_star_total(star_path, memory_budget_mb=512):
+    """
+    Sum the STAR species columns (sp_<id_no>) of a wide Parquet file into a
+    single per-cell STAR total, without loading all columns at once.
+    The file is processed one row group at a time, and within a row group in
+    batches of columns sized so that each batch stays below `memory_budget_mb`.
+    The per-species values already include the IUCN category weights, so the
+    plain sum is the STAR score of the cell. If the file has no sp_ columns
+    but has a precomputed `star_total` column, that column is used directly.
+    Parameters
+    ----------
+    star_path : str or Path
+        Path to the STAR Parquet (key column `grid_id`).
+    memory_budget_mb : int, optional
+        Approximate memory budget for one column batch. Default 512 MB.
+    Returns
+    -------
+    pandas.DataFrame
+        Columns `grid_id` (int64) and `star_total` (float64), one row per cell
+        in the file.
+    """
+
+    pf = pq.ParquetFile(_resolve(star_path))
+    names = pf.schema_arrow.names
+    assert "grid_id" in names, f"No grid_id column in {star_path}"
+    sp_cols = [c for c in names if c.startswith(SPECIES_PREFIX)]
+
+    if not sp_cols:
+        assert SPECIES_COL in names, f"No {SPECIES_PREFIX}* or {SPECIES_COL} columns in {star_path}"
+        t = pf.read(columns=["grid_id", SPECIES_COL]).to_pandas()
+        return t.astype({"grid_id": np.int64, SPECIES_COL: np.float64})
+
+    parts = []
+    for rg in range(pf.num_row_groups):
+        n_rows = pf.metadata.row_group(rg).num_rows
+        batch = max(1, int(memory_budget_mb * 2**20 // (max(n_rows, 1) * 8)))
+        gid = pf.read_row_group(rg, columns=["grid_id"]).column(0).to_numpy()
+        total = np.zeros(n_rows, dtype=np.float64)
+        for start in range(0, len(sp_cols), batch):
+            cols = sp_cols[start:start + batch]
+            t = pf.read_row_group(rg, columns=cols)
+            for col in t.columns:
+                total += col.to_numpy(zero_copy_only=False).astype(np.float64, copy=False)
+            del t
+        parts.append(pd.DataFrame({"grid_id": gid.astype(np.int64), SPECIES_COL: total}))
+
+    out = pd.concat(parts, ignore_index=True)
+    print(f"STAR total computed from {len(sp_cols):,} species columns over {len(out):,} cells "
+          f"({pf.num_row_groups} row group(s))")
+    return out
+
+
+def summarize_species_table(table_path, star_path=None):
+    """
+    Print a short summary of the STAR species table (CSV or Parquet) and check
+    that its species match the sp_<id_no> columns of the STAR Parquet.
+    Expected columns include id_no, name (or sci_name), class, category,
+    weight, global_km2, drc_km2, source; an `included` column, if present,
+    restricts the check to included species.
+    """
+
+    path = _resolve(table_path)
+    sp = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
+    if "included" in sp.columns:
+        sp = sp[sp["included"].astype(bool)]
+    print(f"Species table: {len(sp):,} species")
+    for c in ("class", "category"):
+        if c in sp.columns:
+            print(f"  by {c}: " + ", ".join(f"{k}={v}" for k, v in sp[c].value_counts().items()))
+    if star_path is not None:
+        cols = {c for c in pq.ParquetFile(_resolve(star_path)).schema_arrow.names
+                if c.startswith(SPECIES_PREFIX)}
+        ids = {f"{SPECIES_PREFIX}{int(i)}" for i in sp["id_no"]}
+        if cols and cols != ids:
+            print(f"  WARNING: {len(ids - cols)} species in the table have no column, "
+                  f"{len(cols - ids)} columns are not in the table")
+    return sp
+
+
+def load_data(config, connectivity=True, bbox=None):
+    """
+    Load the planning units needed by a scenario, add metadata columns and,
+    if the scenario uses species, the per-cell STAR total.
+    Parameters
+    ----------
+    config : dict
+        Merged configuration (see load_config). Uses:
+          - data.file_path: planning-unit table (Parquet or CSV)
+          - data.protected_classes / data.protected_th: baseline definition
+          - species.include / species.star_path: STAR species layer
+    connectivity : bool, optional
+        Whether to read the `neighbors` column used by the connectivity term.
+    bbox : dict, optional
+        Spatial subset in native coordinates (see read_planning_units).
+    Returns
+    -------
+    pandas.DataFrame
+        Planning units with the added columns:
+          - "area" (int): 1 (km2) for every row.
+          - "protected" (int): 1 when any protected class value > protected_th
+            (the baseline: PAs, or PAs + CFCLs).
+          - "star_total" (float): only when species are included; cells
+            missing from the STAR file get 0.
+        NaN values in the scored layers are set to 0.
+    """
+
+    df = read_planning_units(config["data"]["file_path"],
+                             required_columns(config, connectivity=connectivity), bbox=bbox)
     df["area"] = 1
     protected_classes = config["data"]["protected_classes"]
     protected_th = config["data"]["protected_th"]
     df["protected"] = ((df[protected_classes] > protected_th).any(axis=1)).astype(int)
-    if preprocess: 
-        df = pre_process_data(df, config)
-    
+
+    if species_included(config):
+        star = load_star_total(config["species"]["star_path"],
+                               config["species"].get("memory_budget_mb", 512))
+        df = df.merge(star, on="grid_id", how="left")
+        n_missing = int(df[SPECIES_COL].isna().sum())
+        if n_missing:
+            print(f"{n_missing:,} planning units have no STAR value; set to 0")
+    df = pre_process_data(df, config)
     return df
 
 
 def pre_process_data(df, config):
     """
-    Pre-process data by converting specified columns to numeric values and handling missing data.
-    This function takes a DataFrame and converts columns defined in the config's 'data.pre_process' 
-    key to numeric values. Any cells that cannot be converted to numeric values (including NaN) 
-    are filled with 0.0.
-    Args:
-        df (pd.DataFrame): The input DataFrame to be pre-processed.
-        config (dict): A configuration dictionary containing a 'data' key with a 'pre_process' 
-                      key that specifies which columns to process. Expected structure:
-                      {'data': {'pre_process': [list of column names]}}
-    Returns:
-        pd.DataFrame: The pre-processed DataFrame with specified columns converted to numeric 
-                     values and missing data filled with 0.0.
+    Set no-data (NaN or non-numeric) cells of all scored layers to 0.0.
+    This covers every maximize/minimize layer of the theme definitions
+    (previously a hand-maintained `pre_process` list in each config).
     """
 
-    # Data Pre-processing:
-    # Setting cells with no data value for pre_process columns (defined in config) to zero
-    cols = config["data"]["pre_process"]
+    cols = [c for c in compute_weights(config)["column"] if c in df.columns]
     df[cols] = df[cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Scoring and candidate identification
+# ---------------------------------------------------------------------------
+
+def score_components(df, weights):
+    """
+    Rescale each scored layer to 0-1 (min-max over df) and return the weighted
+    maximize and minimize parts of the composite score.
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Planning units containing every column in weights["column"].
+    weights : pandas.DataFrame
+        Output of compute_weights.
+    Returns
+    -------
+    (pandas.Series, pandas.Series, pandas.DataFrame)
+        max_part (>= 0), min_part (>= 0, to be subtracted), and the weighted
+        contribution of every theme/direction (columns "<theme>:max"/"<theme>:min").
+    """
+
+    missing = [c for c in weights["column"] if c not in df.columns]
+    assert not missing, f"Missing columns in df: {missing}"
+
+    max_part = np.zeros(len(df))
+    min_part = np.zeros(len(df))
+    themes = {}
+    for row in weights.itertuples(index=False):
+        s = df[row.column].to_numpy(dtype=np.float64)
+        mn, mx = np.nanmin(s), np.nanmax(s)
+        if not np.isfinite(mn) or not np.isfinite(mx) or mx == mn:
+            continue  # constant or invalid -> contributes 0
+        contrib = row.weight * (s - mn) / (mx - mn)
+        key = f"{row.theme}:{'max' if row.direction > 0 else 'min'}"
+        themes[key] = themes.get(key, 0.0) + contrib
+        if row.direction > 0:
+            max_part += contrib
+        else:
+            min_part += contrib
+
+    idx = df.index
+    return pd.Series(max_part, index=idx), pd.Series(min_part, index=idx), pd.DataFrame(themes, index=idx)
+
+
+def multi_c_obj(df, config):
+    """
+    Compute the thematically weighted composite score for every planning unit:
+    score = sum(weight * rescaled maximize layers) - sum(weight * rescaled minimize layers).
+    Returns
+    -------
+    pandas.Series
+    """
+
+    max_part, min_part, _ = score_components(df, compute_weights(config, SPECIES_COL in df.columns))
+    return max_part - min_part
+
+
+def score_diagnostics(max_part, min_part, eligible=None):
+    """
+    Summarize the balance between the maximize and minimize sides of the score.
+    Returns a dict with quantiles of both parts and of the score, and the share
+    of cells (overall and among cells passing the exclusion rules) where the
+    minimize side outweighs the maximize side (score <= 0, i.e. not a candidate).
+    """
+
+    score = max_part - min_part
+    q = [0.05, 0.25, 0.5, 0.75, 0.95]
+    out = {"n_cells": int(len(score)),
+           "score_pos_cells": int((score > 0).sum()),
+           "score_pos_pct": float((score > 0).mean() * 100)}
+    for name, s in (("max", max_part), ("min", min_part), ("score", score)):
+        out[f"{name}_mean"] = float(s.mean())
+        for qq, v in zip(q, s.quantile(q)):
+            out[f"{name}_p{int(qq * 100):02d}"] = float(v)
+    out["min_gt_max_pct"] = float((min_part >= max_part).mean() * 100)
+    if eligible is not None:
+        e = eligible.to_numpy(dtype=bool)
+        out["eligible_cells"] = int(e.sum())
+        out["eligible_score_pos_cells"] = int((score[e] > 0).sum())
+        out["eligible_min_gt_max_pct"] = float((min_part[e] >= max_part[e]).mean() * 100) if e.any() else np.nan
+    return out
+
+
+def eligible_mask(df, config):
+    """True for units that pass every exclusion rule (constraint column <= threshold)."""
+    ineligible = pd.Series(False, index=df.index)
+    for col, threshold in constraint_cols(config):
+        ineligible |= df[col].fillna(0) > threshold
+    return ~ineligible
+
+
+def iden_units(df, config):
+    """
+    Identify candidate planning units based on eligibility criteria.
+    This function filters planning units from a DataFrame based on constraint thresholds
+    and objective scores, marking eligible units as candidates for optimization.
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame containing planning unit data with columns for constraints,
+        objective scores, and protection status.
+    config : dict
+        Configuration dictionary. Exclusion rules are the (column_name, threshold)
+        pairs of optimization.constraint_cols plus optimization.extra_constraint_cols.
+    Returns
+    -------
+    pd.DataFrame
+        Modified DataFrame with an added 'candidate' column where:
+        - 1 indicates units meeting eligibility criteria (either objective_score > 0
+          and passing all constraints, or protected == 1)
+        - 0 indicates ineligible units
+    Notes
+    -----
+    - Units are considered ineligible if any constraint column value exceeds its threshold
+    - Protected units (protected == 1) are always included as candidates
+    - NaN values in constraint columns are treated as 0
+    - Prints summary statistics of identified candidates
+    """
+
+    eligible = eligible_mask(df, config)
+    candid_idx = df.index[(eligible & (df["objective_score"] > 0)) | (df["protected"] == 1)]
+
+    df["candidate"] = 0
+    df.loc[candid_idx, "candidate"] = 1
+
+    print(f"N. of Identified Candidates: {len(candid_idx):,} out of {len(df):,} total planning units")
 
     return df
 
 
-def visualize(df, var, colorbar=True, file_name=None, title=None, show=True):
+# ---------------------------------------------------------------------------
+# Optimization
+# ---------------------------------------------------------------------------
+
+def setup_model(df, protection_frac = 0.30, connectivity = True):
+    """
+    Set up a linear programming optimization model for a conservation protection planning problem.
+    This function creates an integer linear programming model that maximizes the total objective score
+    of protected areas while respecting area budget constraints. It optionally includes a connectivity
+    bonus to encourage protection of neighboring areas.
+    Args:
+        df (pandas.DataFrame): A DataFrame containing candidate areas with the following required columns:
+            - "candidate" (int): Binary indicator (1 = candidate for protection, 0 = not candidate)
+            - "objective_score" (float): Score to maximize for each candidate area
+            - "protected" (bool/int): Binary indicator of already-protected areas (1 = protected, 0 = not)
+            - "neighbors" (list): List of neighboring area indices for connectivity calculation
+            - "area" (numeric): Area size of each candidate (will be coerced to float)
+        protection_frac (float, optional): Fraction of total area that can be protected. Default is 0.30 (30%).
+        connectivity (bool, optional): If True, adds a connectivity bonus to the objective function
+            that incentivizes protection of adjacent areas. Default is True.
+    Returns:
+        tuple: A tuple containing:
+            - model (LpProblem): The configured optimization model (maximization)
+            - x (dict): Dictionary mapping candidate indices to binary decision variables
+    Notes:
+        - Already-protected areas are fixed to be protected (x[i] = 1)
+        - Connectivity weight is set to 0.5 when connectivity is enabled
+        - Double-counting of edges is prevented by only considering pairs where i < j
+        - Area column values are coerced to float and missing values filled with 0.0
+        - The `neighbors` column is read from file as a string (e.g. "[4.0, 5.0]"),
+          so the loop below iterates over characters and the connectivity bonus is
+          currently always empty. This is the behaviour of the original model and
+          is kept unchanged pending a decision (see README, "Known issues").
+    """
+
+    candid_idx = df[df["candidate"]==1].index
+
+    # Assign Binary Decision (protected (1) or not (0))
+    x = {i: LpVariable(f"x_{i}", cat=LpBinary) for i in candid_idx}
+
+    # Problem
+    model = LpProblem("30x30_Protection_Plan", LpMaximize)
+
+    objective_expr = lpSum(df.loc[i, "objective_score"] * x[i] for i in candid_idx)
+
+    if connectivity:
+        connectivity_weight = 0.5
+        connectivity_bonus = lpSum(
+            connectivity_weight * (x[i] + x[j])
+            for i in candid_idx
+            for j in (df.at[i, "neighbors"])
+            if j in candid_idx and i < j   # prevents double counting
+        )
+        objective_expr += connectivity_bonus
+
+    model += objective_expr, "CompositeScore_WithConnectivity"
+
+    #  Fix already-protected areas
+    for i in candid_idx:
+        if bool(df.loc[i, "protected"]):
+            x[i].lowBound = 1
+            x[i].upBound  = 1
+
+    #  Area budget constraint
+    assert "area" in df.columns
+    df["area"] = pd.to_numeric(df["area"], errors="coerce").fillna(0.0)
+    total_area = float(df["area"].sum())
+    model += lpSum(df.loc[i, "area"] * x[i] for i in candid_idx) <= protection_frac * total_area, "AreaBudget"
+    return model, x
+
+
+def solve_model(model, x, df, threads=4, time_limit=2000, gap_rel=0.001):
+    """
+    Solve an optimization model and update a dataframe with selected candidates.
+    Args:
+        model: A PuLP optimization model to solve.
+        x: A dictionary or list of PuLP decision variables indexed by dataframe indices.
+        df: A pandas DataFrame containing candidate data with a "candidate" column.
+        threads (int, optional): Number of threads for the CBC solver. Defaults to 4.
+        time_limit (int, optional): CBC time limit in seconds. Defaults to 2000.
+        gap_rel (float, optional): CBC relative gap tolerance. Defaults to 0.001 (0.1%).
+    Returns:
+        pd.DataFrame: The input dataframe with a new "selected" column containing the
+                      optimized variable values (0.0 if variable value is None).
+    Raises:
+        None: Check LpStatus[model.status] in returned output for solver status.
+    Notes:
+        - Only updates "selected" values for rows where "candidate" column equals 1.
+        - If a decision variable has no value, defaults to 0.0.
+    """
+
+    solver = PULP_CBC_CMD(
+    timeLimit = time_limit,
+    options = ["preprocess off", "log 2"],
+    threads = threads,
+    gapRel = gap_rel,
+    msg = True
+    )
+
+    model.solve(solver)
+
+    print(f"Status: {LpStatus[model.status]}")
+
+    df["selected"] = 0.0
+    cand_idx = df[df["candidate"]==1].index
+    for i in cand_idx:
+        df.at[i, "selected"] = x[i].varValue or 0.0
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+def oil_overlap(df):
+    """
+    Newly selected area (selected and not baseline) and the part of it that
+    falls inside oil blocks. The overlap is area-weighted by `oil_frac`
+    (fraction of each 1 km2 cell covered by oil blocks).
+    Returns
+    -------
+    dict
+        new_area_km2, new_in_oil_km2, new_in_oil_pct, new_cells_touching_oil.
+    """
+
+    new = (df["selected"] > 0.5) & (df["protected"] == 0)
+    area = df["area"].astype(float)
+    oil = df[OIL_COL].fillna(0).clip(0, 1)
+    new_area = float(area[new].sum())
+    in_oil = float((area * oil)[new].sum())
+    return {
+        "new_area_km2": new_area,
+        "new_in_oil_km2": in_oil,
+        "new_in_oil_pct": in_oil / new_area * 100 if new_area else np.nan,
+        "new_cells_touching_oil": int((new & (oil > 0)).sum()),
+    }
+
+
+def upsert_summary(row, path="output/scenario_summary.csv"):
+    """Insert or replace (by `name`) one scenario's row in the summary CSV."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new = pd.DataFrame([row])
+    if path.exists():
+        old = pd.read_csv(path)
+        old = old[old["name"] != row["name"]]
+        new = pd.concat([old, new], ignore_index=True)
+    new.to_csv(path, index=False)
+    return new
+
+
+def grid_array(df, var):
+    """
+    Pivot a column to a 2D array (rows = northing, ascending; cols = easting,
+    ascending) covering the bounding box of df's planning units.
+    Returns (array, x_coords, y_coords).
+    """
+
+    arr = df.pivot(index="y_native", columns="x_native", values=var)
+    return arr.to_numpy(), arr.columns.to_numpy(), arr.index.to_numpy()
+
+
+def visualize(df, var, colorbar=True, file_name=None, title=None, show=True, output_dir="output"):
     """
     Create a spatial map visualization of a column from a DataFrame.
     This function generates a 2D map showing the spatial distribution of values
@@ -90,6 +686,8 @@ def visualize(df, var, colorbar=True, file_name=None, title=None, show=True):
         If True (default), displays the plot with plt.show(). If False, the
         figure is closed after saving instead of displayed — useful when
         batch-running many scenarios to avoid accumulating open figures.
+    output_dir : str, optional
+        Directory the figure is saved to. Default is "output".
     Returns
     -------
     None
@@ -99,14 +697,9 @@ def visualize(df, var, colorbar=True, file_name=None, title=None, show=True):
     - The figure size is fixed at 8x6 inches.
     - Aspect ratio is set to 'equal' for accurate spatial representation.
     """
-    
-    # unique sorted coords
-    lats = np.sort(df["y_native"].unique())
-    lons = np.sort(df["x_native"].unique())
-    
-    # create a 2D array for the values
-    arr = df.pivot(index="y_native", columns="x_native", values=var).to_numpy()
-    
+
+    arr, lons, lats = grid_array(df, var)
+
     fig = plt.figure(figsize=(8, 6))
     fig.set_constrained_layout(False)
     try:
@@ -142,8 +735,8 @@ def visualize(df, var, colorbar=True, file_name=None, title=None, show=True):
     ax.set_aspect("equal")
 
     if file_name:
-        os.makedirs("output", exist_ok=True)
-        plt.savefig(os.path.join("output", file_name), dpi=300)
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, file_name), dpi=300)
 
     if show:
         plt.show()
@@ -155,40 +748,44 @@ def export_to_geotiff(
     df,
     var,
     file_name,
-    projection_info_path="data/projection_info.csv"
+    projection_info_path="data/projection_info.csv",
+    output_dir="output"
 ):
     """
-    Export a DataFrame column as a GeoTIFF raster using a custom CRS/transform.
-    The CRS and affine transform are read from a GEE-exported CSV (projection_info.csv).
+    Export a DataFrame column as a GeoTIFF raster using a custom CRS.
+    The CRS and pixel size are read from a GEE-exported CSV (projection_info.csv).
+    The raster origin is derived from the planning units themselves
+    (x_native/y_native are cell centres), so the raster is correctly
+    georeferenced for the full grid and for spatial subsets alike.
     Args:
         df: DataFrame with 'x_native' (easting), 'y_native' (northing), and var.
         var: Name of the column to export.
         file_name: Output GeoTIFF file name.
         projection_info_path: Path to CSV with columns: scale, transform, wkt.
+        output_dir: Directory the GeoTIFF is written to. Defaults to "output".
     """
 
-    # Create 2D array
-    arr = df.pivot(index="y_native", columns="x_native", values=var).to_numpy()
+    arr, xs, ys = grid_array(df, var)
 
     # Load projection info (WKT + affine transform) exported from GEE
-    proj_df = pd.read_csv(projection_info_path)
+    proj_df = pd.read_csv(_resolve(projection_info_path))
     if proj_df.empty:
         raise ValueError(f"Projection info file is empty: {projection_info_path}")
     wkt = str(proj_df.loc[0, "wkt"])
     transform_str = str(proj_df.loc[0, "transform"])
 
-    # Parse GEE transform string (PARAM_MT) into affine parameters
+    # Pixel size and rotation from the GEE transform string (PARAM_MT); the
+    # origin is the outer corner of the top-left planning unit.
     params = dict(re.findall(r'PARAMETER\["([^"]+)",\s*([-0-9\.eE]+)\]', transform_str))
     a = float(params.get("elt_0_0", 1.0))
     b = float(params.get("elt_0_1", 0.0))
-    c = float(params.get("elt_0_2", 0.0))
     d = float(params.get("elt_1_0", 0.0))
     e = float(params.get("elt_1_1", -1.0))
-    f = float(params.get("elt_1_2", 0.0))
+    c = float(xs.min()) - a / 2
+    f = float(ys.max()) - e / 2
     transform = Affine(a, b, c, d, e, f)
 
     # Write GeoTIFF
-    output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, file_name)
     with rasterio.open(
@@ -205,216 +802,3 @@ def export_to_geotiff(
     ) as dst:
         dst.write(np.flipud(arr), 1)
     print(f"GeoTIFF written to {file_name}")
-
-
-def multi_c_obj(df, config):
-    """
-    Compute a weighted multi-objective composite score for a DataFrame.
-    Normalizes specified columns to the range [0, 1], applies direction weights
-    (maximize or minimize), and combines them into a single composite score.
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame containing the columns to optimize.
-    config : dict
-        Configuration dictionary with structure:
-        {
-            "optimization": {
-                "maximize_cols": list of str,
-                    Column names to maximize,
-                "minimize_cols": list of str,
-                    Column names to minimize,
-                "weights": dict, optional
-                    Mapping of column names to weights (default: 1.0 for all columns)
-            }
-        }
-    Returns
-    -------
-    pd.Series
-        Composite score for each row in df, where higher values indicate
-        better solutions according to the optimization objectives.
-    Raises
-    ------
-    AssertionError
-        If any column specified in maximize_cols or minimize_cols is not
-        present in df.
-    """
-
-    maximize_cols = config["optimization"]["maximize_cols"]
-    minimize_cols = config["optimization"]["minimize_cols"]
-    weights = config["optimization"].get("weights", {})
-
-    all_cols = maximize_cols + minimize_cols
-
-    # Ensure all columns exist
-    missing = [c for c in all_cols if c not in df.columns]
-    assert not missing, f"Missing columns in df: {missing}"
-
-    # Build normalized columns (0..1), robust to constants/NaNs
-    norm = {}
-    for c in all_cols:
-        s = df[c]
-        mn, mx = float(s.min(skipna=True)), float(s.max(skipna=True))
-        if not np.isfinite(mn) or not np.isfinite(mx) or mx == mn:
-            # constant or invalid → contributes 0
-            norm[c] = pd.Series(0.0, index=df.index)
-        else:
-            norm[c] = (s - mn) / (mx - mn)
-
-    # Direction: +1 for maximize, -1 for minimize
-    direction = {c: 1.0 for c in maximize_cols}
-    direction.update({c: -1.0 for c in minimize_cols})
-
-    # Per-cell composite score
-    score = pd.Series(0.0, index=df.index)
-    for c in all_cols:
-        w = float(weights.get(c, 1.0))
-        score = score + direction[c] * w * norm[c]
-
-    return score
-
-
-def iden_units(df, config):
-    """
-    Identify candidate planning units based on eligibility criteria.
-    This function filters planning units from a DataFrame based on constraint thresholds
-    and objective scores, marking eligible units as candidates for optimization.
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame containing planning unit data with columns for constraints,
-        objective scores, and protection status.
-    config : dict
-        Configuration dictionary containing optimization parameters. Must include
-        'optimization' > 'constraint_cols' key with a list of tuples specifying
-        (column_name, threshold) pairs for constraint evaluation.
-    Returns
-    -------
-    pd.DataFrame
-        Modified DataFrame with an added 'candidate' column where:
-        - 1 indicates units meeting eligibility criteria (either objective_score > 0
-          and passing all constraints, or protected == 1)
-        - 0 indicates ineligible units
-    Notes
-    -----
-    - Units are considered ineligible if any constraint column value exceeds its threshold
-    - Protected units (protected == 1) are always included as candidates
-    - NaN values in constraint columns are treated as 0
-    - Prints summary statistics of identified candidates
-    """
-
-    constraint_cols = config["optimization"]["constraint_cols"]
-    ineligible = pd.Series(False, index=df.index)
-    for col, threshold in constraint_cols:
-        ineligible |= df[col].fillna(0) > threshold
-    eligible = ~ineligible
-    candid_idx = df.index[(eligible & (df["objective_score"] > 0)) | (df["protected"] == 1)]
-    
-    df["candidate"] = 0
-    df.loc[candid_idx, "candidate"] = 1
-
-    print(f"N. of Identified Candidates: {len(candid_idx):,} out of {len(df):,} total planning units")
-
-    return df
-
-
-def setup_model(df, protection_frac = 0.30, connectivity = True):
-    """
-    Set up a linear programming optimization model for a conservation protection planning problem.
-    This function creates an integer linear programming model that maximizes the total objective score
-    of protected areas while respecting area budget constraints. It optionally includes a connectivity
-    bonus to encourage protection of neighboring areas.
-    Args:
-        df (pandas.DataFrame): A DataFrame containing candidate areas with the following required columns:
-            - "candidate" (int): Binary indicator (1 = candidate for protection, 0 = not candidate)
-            - "objective_score" (float): Score to maximize for each candidate area
-            - "protected" (bool/int): Binary indicator of already-protected areas (1 = protected, 0 = not)
-            - "neighbors" (list): List of neighboring area indices for connectivity calculation
-            - "area" (numeric): Area size of each candidate (will be coerced to float)
-        protection_frac (float, optional): Fraction of total area that can be protected. Default is 0.30 (30%).
-        connectivity (bool, optional): If True, adds a connectivity bonus to the objective function
-            that incentivizes protection of adjacent areas. Default is True.
-    Returns:
-        tuple: A tuple containing:
-            - model (LpProblem): The configured optimization model (maximization)
-            - x (dict): Dictionary mapping candidate indices to binary decision variables
-    Notes:
-        - Already-protected areas are fixed to be protected (x[i] = 1)
-        - Connectivity weight is set to 0.5 when connectivity is enabled
-        - Double-counting of edges is prevented by only considering pairs where i < j
-        - Area column values are coerced to float and missing values filled with 0.0
-    """
-
-    candid_idx = df[df["candidate"]==1].index
-    
-    # Assign Binary Decision (protected (1) or not (0))
-    x = {i: LpVariable(f"x_{i}", cat=LpBinary) for i in candid_idx}
-    
-    # Problem
-    model = LpProblem("30x30_Protection_Plan", LpMaximize)
-    
-    objective_expr = lpSum(df.loc[i, "objective_score"] * x[i] for i in candid_idx)
-    
-    if connectivity:
-        connectivity_weight = 0.5
-        connectivity_bonus = lpSum(
-            connectivity_weight * (x[i] + x[j])
-            for i in candid_idx
-            for j in (df.at[i, "neighbors"])
-            if j in candid_idx and i < j   # prevents double counting
-        )
-        objective_expr += connectivity_bonus
-    
-    model += objective_expr, "CompositeScore_WithConnectivity"
-    
-    #  Fix already-protected areas 
-    for i in candid_idx:
-        if bool(df.loc[i, "protected"]):  
-            x[i].lowBound = 1
-            x[i].upBound  = 1
-    
-    #  Area budget constraint 
-    assert "area" in df.columns
-    df["area"] = pd.to_numeric(df["area"], errors="coerce").fillna(0.0)
-    total_area = float(df["area"].sum())
-    model += lpSum(df.loc[i, "area"] * x[i] for i in candid_idx) <= protection_frac * total_area, "AreaBudget"
-    return model, x
-
-                        
-def solve_model(model, x, df, threads=4):
-    """
-    Solve an optimization model and update a dataframe with selected candidates.
-    Args:
-        model: A PuLP optimization model to solve.
-        x: A dictionary or list of PuLP decision variables indexed by dataframe indices.
-        df: A pandas DataFrame containing candidate data with a "candidate" column.
-        threads (int, optional): Number of threads for the CBC solver. Defaults to 4.
-    Returns:
-        pd.DataFrame: The input dataframe with a new "selected" column containing the 
-                      optimized variable values (0.0 if variable value is None).
-    Raises:
-        None: Check LpStatus[model.status] in returned output for solver status.
-    Notes:
-        - Uses PuLP's CBC solver with a 2000 second time limit and 0.1% relative gap tolerance.
-        - Only updates "selected" values for rows where "candidate" column equals 1.
-        - If a decision variable has no value, defaults to 0.0.
-    """
-
-    solver = PULP_CBC_CMD(
-    timeLimit = 2000,
-    options = ["preprocess off", "log 2"],
-    threads = threads, 
-    gapRel = 0.001,
-    msg = True
-    )
-    
-    model.solve(solver)
-
-    print(f"Status: {LpStatus[model.status]}")
-    
-    df["selected"] = 0.0
-    cand_idx = df[df["candidate"]==1].index
-    for i in cand_idx:
-        df.at[i, "selected"] = x[i].varValue or 0.0
-
-    return df

@@ -1,0 +1,26 @@
+# DRC 30x30 spatial optimization scenario 09
+# Baseline = existing protected areas (PAs). PAs count towards 30% and are locked in;
+# CFCLs are not counted and units with > 30% CFCL cover are excluded.
+# Climate mitigation (carbon) theme share doubled, with species.
+
+extends:
+- "configs/common/defaults.yml"
+- "configs/common/themes.yml"
+
+name: "PAs as baseline - Climate mitigation x2"
+baseline: "PAs as baseline"
+
+data:
+  protected_classes:
+  - "protected_frac"
+
+species:
+  include: true
+
+weighting:
+  priority:
+    climate_mitigation: 2.0
+
+optimization:
+  extra_constraint_cols:
+  - ["cfcl_frac", 0.3]
