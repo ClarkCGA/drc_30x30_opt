@@ -19,6 +19,9 @@ species:
   # overrides: the DRC_STAR_PATH / DRC_STAR_SPECIES_TABLE environment variables.
   star_path: "data/star/star_1km_species.parquet"
   species_table: "data/star/star_species.csv"
+  # Per-cell star_total / star_threatened, used to report the share of national
+  # STAR captured by each run (override: DRC_STAR_SUMMARY).
+  summary_path: "data/star/star_1km_summary.parquet"
   # Memory budget (MB) for one batch of species columns while summing.
   memory_budget_mb: 512
 

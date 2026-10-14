@@ -50,6 +50,19 @@ def check_weights(config_paths):
     print(f"[ok] theme weights for {len(config_paths)} configs")
 
 
+def check_rescale():
+    from scripts import utils
+    v = np.array([0.0, 0.0, 1e-4, 1e-4, 2e-3, 3.8])
+    r = utils.rescale(v, "rank")
+    assert (r[:2] == 0).all() and r[2] == r[3] and r[-1] == 1.0 and (np.diff(r) >= 0).all()
+    assert np.isclose(r[2], 1.5 / 4)  # tied pair shares the average rank among the 4 positive cells
+    m = utils.rescale(v, "minmax")
+    assert m[0] == 0 and m[-1] == 1
+    c = utils.load_config(sorted(Path("configs").glob("*.yml"))[0])
+    assert utils.layer_scaling(c)["star_total"] == "rank" and utils.layer_scaling(c)["kba_frac"] == "minmax"
+    print("[ok] layer rescaling (rank for star_total, min-max otherwise)")
+
+
 def check_star_reader(star_path):
     from scripts import utils
     ref = pd.read_parquet(star_path)
@@ -68,7 +81,7 @@ def diagnostics(config_paths, out_dir):
         c = utils.load_config(p)
         df = utils.load_data(c)
         w = utils.compute_weights(c)
-        max_part, min_part, themes = utils.score_components(df, w)
+        max_part, min_part, themes = utils.score_components(df, w, utils.layer_scaling(c))
         eligible = utils.eligible_mask(df, c)
         d = utils.score_diagnostics(max_part, min_part, eligible=eligible)
         non_base = eligible & (df["protected"] == 0)
@@ -128,7 +141,9 @@ def end_to_end(config_paths, out_dir, bbox, configs_dir):
         run_scenario(p, bbox=bbox, output_dir=str(out_dir), threads=4, verbose=False)
     summary = pd.read_csv(out_dir / "scenario_summary.csv")
     print(summary[["name", "status", "selected_pct", "new_area_km2", "new_in_oil_km2",
-                   "new_in_oil_pct", "score_pos_pct", "eligible_min_gt_max_pct"]].to_string(index=False))
+                   "new_in_oil_pct", "star_share_new_pct", "star_share_selected_pct",
+                   "star_threatened_share_new_pct"]].to_string(index=False))
+    assert summary["star_share_selected_pct"].between(0, 100).all(), "STAR capture not reported"
     assert (summary["status"] == "Optimal").all(), "Not all runs solved to optimality"
     assert (summary["selected_pct"] <= 30.0 + 1e-6).all(), "Area cap violated"
     build_consensus(configs_dir, str(out_dir), show=False)
@@ -147,10 +162,12 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     os.environ["DRC_STAR_PATH"] = args.star
+    os.environ["DRC_STAR_SUMMARY"] = str(Path(args.star).with_name("star_1km_summary.parquet"))
     configs = sorted(Path(args.configs_dir).glob("*.yml"))
     out_dir = Path(args.out_dir)
 
     check_weights(configs)
+    check_rescale()
     check_star_reader(args.star)
     if not args.skip_diagnostics:
         diagnostics(configs, out_dir)

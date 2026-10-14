@@ -58,7 +58,7 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
     weights = utils.compute_weights(config)
     if verbose:
         print(weights.to_string(index=False))
-    max_part, min_part, _ = utils.score_components(drc_df, weights)
+    max_part, min_part, _ = utils.score_components(drc_df, weights, utils.layer_scaling(config))
     drc_df["objective_score"] = max_part - min_part
     diag = utils.score_diagnostics(max_part, min_part, eligible=utils.eligible_mask(drc_df, config))
     if verbose:
@@ -111,9 +111,11 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
     utils.export_to_geotiff(drc_df, "protected", f"{name} - Baseline Areas.tif", output_dir=output_dir)
 
     oil = utils.oil_overlap(drc_df)
+    star = utils.star_capture(drc_df, config)
     if verbose:
         print(f"Newly selected: {oil['new_area_km2']:,.0f} km2, of which {oil['new_in_oil_km2']:,.0f} km2 "
-              f"({oil['new_in_oil_pct']:.1f}%) inside oil blocks")
+              f"({oil['new_in_oil_pct']:.1f}%) inside oil blocks; STAR captured: new "
+              f"{star['star_share_new_pct']:.1f}%, baseline + new {star['star_share_selected_pct']:.1f}%")
 
     row = {
         "name": name,
@@ -130,6 +132,7 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
         "selected_pct": used_area / total_area * 100 if total_area else float("nan"),
         "n_candidates": int(drc_df["candidate"].sum()),
         **oil,
+        **star,
         **patches,
         "max_weight_sum": float(weights.loc[weights["direction"] > 0, "weight"].sum()),
         "min_weight_sum": float(weights.loc[weights["direction"] < 0, "weight"].sum()),

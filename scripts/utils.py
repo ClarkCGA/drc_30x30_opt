@@ -53,9 +53,9 @@ def load_config(config_path):
     Load a scenario config and merge in the shared files it `extends`.
     Each file listed under `extends` (paths relative to the repository root) is
     deep-merged in order, and the scenario's own keys are merged last so they
-    take precedence. The environment variables DRC_STAR_PATH and
-    DRC_STAR_SPECIES_TABLE, when set, override species.star_path and
-    species.species_table. The shared files hold the theme definitions
+    take precedence. The environment variables DRC_STAR_PATH,
+    DRC_STAR_SPECIES_TABLE and DRC_STAR_SUMMARY, when set, override
+    species.star_path, species.species_table and species.summary_path. The shared files hold the theme definitions
     (configs/common/themes.yml) and the defaults common to all scenarios
     (configs/common/defaults.yml: data paths, exclusion rules, solver settings).
     Parameters
@@ -79,7 +79,8 @@ def load_config(config_path):
     config["config_path"] = str(config_path)
 
     # Environment overrides for the STAR inputs (e.g. to point at a test file).
-    for env, key in (("DRC_STAR_PATH", "star_path"), ("DRC_STAR_SPECIES_TABLE", "species_table")):
+    for env, key in (("DRC_STAR_PATH", "star_path"), ("DRC_STAR_SPECIES_TABLE", "species_table"),
+                     ("DRC_STAR_SUMMARY", "summary_path")):
         if os.environ.get(env):
             config.setdefault("species", {})[key] = os.environ[env]
     return config
@@ -388,16 +389,52 @@ def pre_process_data(df, config):
 # Scoring and candidate identification
 # ---------------------------------------------------------------------------
 
-def score_components(df, weights):
+def layer_scaling(config):
+    """Per-layer scaling method: `scaling.columns` overrides `scaling.default` ("minmax")."""
+    scaling = config.get("scaling", {})
+    default = scaling.get("default", "minmax")
+    columns = scaling.get("columns") or {}
+    return {c: columns.get(c, default) for c in compute_weights(config, True)["column"]}
+
+
+def rescale(values, method="minmax"):
     """
-    Rescale each scored layer to 0-1 (min-max over df) and return the weighted
-    maximize and minimize parts of the composite score.
+    Rescale a layer to 0-1.
+      - "minmax": (v - min) / (max - min); a constant layer gives 0.
+      - "rank": percentile rank among the cells with a value > 0, so the
+        smallest positive value gets 1/n_pos and the largest 1; tied values
+        share their average rank; cells with value <= 0 (e.g. no species)
+        get 0. Order is kept, magnitudes are not.
+    """
+
+    s = np.asarray(values, dtype=np.float64)
+    if method == "minmax":
+        mn, mx = np.nanmin(s), np.nanmax(s)
+        if not np.isfinite(mn) or not np.isfinite(mx) or mx == mn:
+            return np.zeros_like(s)  # constant or invalid -> contributes 0
+        return (s - mn) / (mx - mn)
+    if method == "rank":
+        out = np.zeros_like(s)
+        pos = s > 0
+        if pos.any():
+            out[pos] = pd.Series(s[pos]).rank(method="average", pct=True).to_numpy()
+        return out
+    raise ValueError(f"Unknown scaling method: {method!r} (use 'minmax' or 'rank')")
+
+
+def score_components(df, weights, scaling=None):
+    """
+    Rescale each scored layer to 0-1 (min-max over df by default, or the
+    method given in `scaling`, see rescale) and return the weighted maximize
+    and minimize parts of the composite score.
     Parameters
     ----------
     df : pandas.DataFrame
         Planning units containing every column in weights["column"].
     weights : pandas.DataFrame
         Output of compute_weights.
+    scaling : dict, optional
+        Layer -> scaling method (output of layer_scaling). Default: min-max for all.
     Returns
     -------
     (pandas.Series, pandas.Series, pandas.DataFrame)
@@ -408,15 +445,13 @@ def score_components(df, weights):
     missing = [c for c in weights["column"] if c not in df.columns]
     assert not missing, f"Missing columns in df: {missing}"
 
+    scaling = scaling or {}
     max_part = np.zeros(len(df))
     min_part = np.zeros(len(df))
     themes = {}
     for row in weights.itertuples(index=False):
-        s = df[row.column].to_numpy(dtype=np.float64)
-        mn, mx = np.nanmin(s), np.nanmax(s)
-        if not np.isfinite(mn) or not np.isfinite(mx) or mx == mn:
-            continue  # constant or invalid -> contributes 0
-        contrib = row.weight * (s - mn) / (mx - mn)
+        contrib = row.weight * rescale(df[row.column].to_numpy(dtype=np.float64),
+                                       scaling.get(row.column, "minmax"))
         key = f"{row.theme}:{'max' if row.direction > 0 else 'min'}"
         themes[key] = themes.get(key, 0.0) + contrib
         if row.direction > 0:
@@ -431,13 +466,15 @@ def score_components(df, weights):
 def multi_c_obj(df, config):
     """
     Compute the thematically weighted composite score for every planning unit:
-    score = sum(weight * rescaled maximize layers) - sum(weight * rescaled minimize layers).
+    score = sum(weight * rescaled maximize layers) - sum(weight * rescaled minimize layers),
+    with each layer rescaled as set in `scaling` (layer_scaling).
     Returns
     -------
     pandas.Series
     """
 
-    max_part, min_part, _ = score_components(df, compute_weights(config, SPECIES_COL in df.columns))
+    max_part, min_part, _ = score_components(df, compute_weights(config, SPECIES_COL in df.columns),
+                                             layer_scaling(config))
     return max_part - min_part
 
 
@@ -660,6 +697,33 @@ def oil_overlap(df):
         "new_in_oil_pct": in_oil / new_area * 100 if new_area else np.nan,
         "new_cells_touching_oil": int((new & (oil > 0)).sum()),
     }
+
+
+def star_capture(df, config):
+    """
+    Share of the national STAR total (and of threatened-only STAR) captured
+    by the newly selected units and by baseline + new units, from the STAR
+    summary Parquet (`species.summary_path`: grid_id, star_total,
+    star_threatened). Computed for every run, with or without species in the
+    score. Returns NaNs if the summary file is missing.
+    """
+
+    keys = ["star_share_new_pct", "star_share_selected_pct",
+            "star_threatened_share_new_pct", "star_threatened_share_selected_pct"]
+    path = config.get("species", {}).get("summary_path")
+    if not path or not _resolve(path).exists():
+        print(f"STAR summary not found ({path}); STAR capture not reported")
+        return {k: np.nan for k in keys}
+    star = pd.read_parquet(_resolve(path), columns=["grid_id", "star_total", "star_threatened"])
+    d = df[["grid_id", "selected", "protected"]].merge(star, on="grid_id", how="left").fillna(0.0)
+    sel = d["selected"] > 0.5
+    new = sel & (d["protected"] == 0)
+    out = {}
+    for col, prefix in (("star_total", "star"), ("star_threatened", "star_threatened")):
+        total = float(d[col].sum())
+        out[f"{prefix}_share_new_pct"] = float(d.loc[new, col].sum()) / total * 100 if total else np.nan
+        out[f"{prefix}_share_selected_pct"] = float(d.loc[sel, col].sum()) / total * 100 if total else np.nan
+    return out
 
 
 def upsert_summary(row, path="output/scenario_summary.csv"):

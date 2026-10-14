@@ -6,7 +6,8 @@ refer to the 1 km planning-unit table (2,328,518 cells).
 
 ## 1. No-data handling of scored layers
 
-All scored layers are rescaled to 0-1 (min-max) before weighting. Missing
+All scored layers are rescaled to 0-1 before weighting (min-max, except the
+STAR species total, see section 3). Missing
 cells must be filled first. The rule is configurable under `fill_na` in
 `configs/common/themes.yml` (a number, `"median"` or `"mean"` per layer; the
 median/mean is taken over the layer's observed cells on the full grid; in
@@ -70,7 +71,8 @@ appropriate.
   and Freshwater have minimize layers).
 - Biodiversity's maximize share is split 50% KBA / 50% STAR species total
   (per-cell sum of the STAR values, which already include the IUCN category
-  weights). Without species, KBA receives the full share.
+  weights; rank-scaled, see section 3). Without species, KBA receives the
+  full share.
 - Score = Σ weight × rescaled maximize layer − Σ weight × rescaled minimize
   layer; cells with score ≤ 0 or failing an exclusion rule are not candidates.
 
@@ -101,7 +103,87 @@ in the Ecological integrity x2 run made the minimize side dominate (34% vs
 64%). About 93% of cells now have a positive score, so the score threshold
 removes few cells; eligibility is set mainly by the exclusion rules.
 
-## 3. Spatial connectivity
+## 3. STAR species layer
+
+### Input
+
+The species layer is the per-cell STAR total from the STAR pipeline of
+`drc_30x30_data_prep` (branch `star-pipeline`, commit 71f1844): the sum over
+4,251 species of category weight × share of the species' global range (or
+BirdLife Area of Habitat, for all 1,116 birds) inside the cell. The project
+uses its own category weights (CR 5, EN 4, VU 3, DD 3, NT 2, LC 1; documented
+in the data-prep `docs/STAR_METHODS.md`), so Least Concern species count with
+weight 1, unlike standard STAR (LC 0, DD excluded). Checks: `grid_id` joins
+1:1 with all 2,328,518 planning units; 2,022 cells (mostly lake and coastal
+cells) have no species; the optimizer's batched sum of the species columns
+equals the pipeline's `star_total` to within 6×10⁻⁸.
+
+### Why the STAR total is rank-scaled
+
+The STAR total is extremely heavy-tailed. Each species' values sum to its
+weight × the share of its global range inside the DRC, so species with tiny
+global ranges concentrate their whole weight in a few cells. The median cell
+has 0.00054, the 99th percentile 0.0089 and the maximum 3.84, about 7,000
+times the median. That maximum cell holds two Critically Endangered
+chameleons (*Rhampholeon hattinghi*, *Kinyongia mulyai*) with global ranges of
+about 1.6 km².
+
+With min-max rescaling, used for all other layers, the maximum maps to 1 and
+almost every other cell to ~0: the rescaled layer averages 0.0003; only 687
+cells exceed 0.01 and 21 exceed 0.1. The species half of the Biodiversity
+theme then had virtually no influence. The *Biodiversity x2* run (KBA and
+species both at weight 1) produced the same selection as the no-species run
+(overlap 1.000; the species term was worth ~0.01% of the objective), and
+the with-species runs differed from the no-species runs only because KBA's
+weight was halved to make room for species.
+
+The STAR total is therefore rescaled by **percentile rank**: cells without
+species get 0; cells with species get their rank among those cells divided
+by their number (ties share their average rank), so the lowest positive
+value gets ~0 and the highest 1. The species layer then differentiates all
+cells instead of a few hundred, while keeping their order.
+
+**Trade-off.** Rank scaling keeps the order of cells but drops the
+magnitudes: a micro-endemic hotspot ranks at the top but no longer outweighs
+thousands of other cells. Absolute STAR differences remain visible in the
+reported STAR capture (below). It is also inconsistent with the other layers,
+which keep min-max: a rank-scaled layer has a uniform distribution, while
+most min-max layers are skewed towards 0, so per unit of weight the species
+layer varies more across cells than most other layers. This is intended (it
+restores the species share agreed in the weighting) and is limited to this
+one layer, whose distribution makes min-max uninformative. The method is
+configurable per layer (`scaling` in `configs/common/themes.yml`).
+
+### Effect (full grid, before → after)
+
+| | Min-max | Rank |
+|---|---|---|
+| Overlap of new areas, Balanced vs Balanced, no species (PAs / PAs+CFCLs) | 0.933 / 0.933 | 0.892 / 0.890 |
+| Overlap, Biodiversity x2 vs Balanced, no species | 1.000 / 1.000 | 0.844 / 0.836 |
+| Overlap, Biodiversity x2 vs Balanced | 0.933 / 0.933 | 0.893 / 0.870 |
+| National STAR captured by new areas, Balanced (PAs) | 14.3% | 15.3% |
+| National STAR captured by new areas, Biodiversity x2 (PAs) | 14.4% | 16.5% |
+| Threatened-only STAR captured by new areas, Biodiversity x2 (PAs) | 9.0% | 10.0% |
+| Units newly selected in all 10 runs | 399,412 | 365,860 |
+
+The gain in captured STAR is modest. The new areas (19.6% of the country in
+the *PAs as baseline* runs) still capture less than their area share of STAR
+(14-17%) and of threatened STAR (8-10%). The reason is spatial: 72% of the top
+1% STAR cells lie in the east (Albertine Rift side, east of 27.5°E), where
+the other maximize layers (carbon, conservation priorities, green corridor,
+freshwater) are lower than in the central basin, and the species layer is one
+half of one of six themes. A stronger species influence would be a weighting
+decision (e.g. a larger species share), or a STAR target constraint.
+
+### STAR capture reporting
+
+Every run reports, in `output/scenario_summary.csv`, the share of the national
+STAR total captured by the new areas and by baseline + new areas, for all
+species (`star_share_*`) and threatened species only (CR, EN, VU;
+`star_threatened_share_*`), from `star_1km_summary.parquet`. It is reported
+for the no-species runs too, so all scenarios can be compared.
+
+## 4. Spatial connectivity
 
 ### Formulation
 
@@ -181,7 +263,7 @@ so the unconnected solution is already less fragmented.)
   and patch-size or contiguity rules cannot be expressed; those would need
   the CBC path on reduced problems.
 
-## 4. Other data notes
+## 5. Other data notes
 
 - `pop_sum` has three negative values (-200, -400) and is so right-skewed
   that after rescaling it is ~0 almost everywhere; `mean_MarinePressure` is
@@ -190,7 +272,7 @@ so the unconnected solution is already less fragmented.)
   blocks (km², area-weighted by `oil_frac`, and % of newly selected area) is
   reported per scenario in `output/scenario_summary.csv`.
 
-## 5. Raster georeferencing fix
+## 6. Raster georeferencing fix
 
 GeoTIFFs exported before October 2026 are shifted 5 km west and 3 km north:
 the raster origin was taken from `data/projection_info.csv` (the corner of

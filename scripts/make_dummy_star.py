@@ -7,6 +7,7 @@ Format (matching drc_30x30_data_prep/star):
   - star_1km_species.parquet: `grid_id` (int64) + one float32 column
     `sp_<id_no>` per species, written in row groups of 50,000 cells. Values
     are per-cell STAR scores, already multiplied by the category weight.
+  - star_1km_summary.parquet: grid_id, star_total, star_threatened, n_species.
   - star_species.csv: id_no, name, class, category, weight, global_km2,
     drc_km2, source, included.
 
@@ -68,6 +69,10 @@ def make_dummy(planning_units, out_dir, n_species=300, row_group=50_000, seed=42
     cols = [f"sp_{i}" for i in id_no[keep]]
     sel = np.flatnonzero(keep)
     schema = pa.schema([("grid_id", pa.int64())] + [(c, pa.float32()) for c in cols])
+    threatened = np.isin(categories, ["CR", "EN", "VU"])
+    total = np.zeros(len(pu))
+    total_thr = np.zeros(len(pu))
+    n_sp = np.zeros(len(pu), np.int32)
     with pq.ParquetWriter(out_dir / "star_1km_species.parquet", schema, compression="zstd") as w:
         for lo in range(0, len(pu), row_group):
             hi = min(lo + row_group, len(pu))
@@ -75,8 +80,16 @@ def make_dummy(planning_units, out_dir, n_species=300, row_group=50_000, seed=42
             arrays = [pa.array(pu["grid_id"].to_numpy()[lo:hi])]
             for j in sel:
                 inside = (xs - cx[j]) ** 2 + (ys - cy[j]) ** 2 <= radius[j] ** 2
-                arrays.append(pa.array(np.where(inside, value[j], 0).astype(np.float32)))
+                v = np.where(inside, value[j], 0).astype(np.float32)
+                arrays.append(pa.array(v))
+                total[lo:hi] += v
+                n_sp[lo:hi] += inside
+                if threatened[j]:
+                    total_thr[lo:hi] += v
             w.write_table(pa.Table.from_arrays(arrays, schema=schema))
+    pq.write_table(pa.table({"grid_id": pu["grid_id"].to_numpy(), "star_total": total.astype(np.float32),
+                             "star_threatened": total_thr.astype(np.float32), "n_species": n_sp}),
+                   out_dir / "star_1km_summary.parquet")
     print(f"Dummy STAR written to {out_dir}: {len(cols)} species x {len(pu):,} cells")
 
 

@@ -22,6 +22,19 @@
 weighting:
   base_share: 1.0
 
+# Rescaling of the scored layers to 0-1 (scripts/utils.py::rescale):
+#   minmax: (v - min) / (max - min)  [default]
+#   rank:   percentile rank among cells with a value > 0 (ties share their
+#           average rank); cells with value <= 0 get 0. Keeps the order,
+#           drops the magnitudes.
+# star_total uses rank because it is extremely heavy-tailed (a few cells of
+# micro-endemic species dominate it; min-max would leave ~0 everywhere else).
+# See docs/METHODS_NOTES.md.
+scaling:
+  default: "minmax"
+  columns:
+    star_total: "rank"
+
 # No-data handling for the scored layers (scripts/utils.py::pre_process_data):
 # `default` applies to every layer not listed under `columns`; a value can be
 # a number, "median" or "mean" (over the layer's non-missing cells). See
