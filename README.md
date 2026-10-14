@@ -17,7 +17,7 @@ If you are running this on Windows, it's recommended to run it inside Windows Su
   python -m scripts.convert_to_parquet   # writes data/drc_1km_data_planning_units.parquet
   ```
   (If the Parquet file is missing, the CSV is read instead, with column selection.) The legacy column `cf_frac` is read as `cfcl_frac` (CFCL = Concession Forestière de Communauté Locale, Local Community Forest Concession).
-- **STAR species layer**: produced by the STAR pipeline in `drc_30x30_data_prep`: a wide Parquet keyed by `grid_id` with one `sp_<id_no>` column per species (per-cell STAR values, already including the IUCN category weight), plus a species table (`id_no`, name, class, category, weight, global km², DRC km², source). Default paths: `../drc_30x30_data_prep/output/star/star_1km_species.parquet` and `star_species.csv` next to it, i.e. the data-prep repository checked out next to this one (set in `configs/common/defaults.yml`, or override with the `DRC_STAR_PATH` / `DRC_STAR_SPECIES_TABLE` environment variables; in Docker, mount the STAR folder and set `DRC_STAR_PATH`). The species columns are summed per cell into a single STAR total in row-group/column batches, so the ~4,000 columns are never loaded at once.
+- **STAR species layer**: produced by the STAR pipeline in `drc_30x30_data_prep`: a wide Parquet keyed by `grid_id` with one `sp_<id_no>` column per species (per-cell STAR values, already including the IUCN category weight), plus a species table (`id_no`, name, class, category, weight, global km², DRC km², source). Expected in `data/star/` (see [STAR species input](#star-species-input) below). The species columns are summed per cell into a single STAR total in row-group/column batches, so the ~4,000 columns are never loaded at once.
 
 ## Scenario design
 
@@ -72,6 +72,35 @@ Config files are `01`–`10_config_<baseline>_<variant>.yml` (e.g. `01_config_pa
 ### Outputs
 In `output/`, per scenario: `<name>.png/.tif` (selected areas), `<name> - Baseline Areas.png/.tif`, `<name> - Objective Score.png`, `<name> - Candidates.png`. `scenario_summary.csv` has one row per scenario: areas, newly selected area inside oil blocks (km², area-weighted by `oil_frac`, and % of the newly selected area), solver information (solver, status, objective, upper bound and gap), fragmentation (number of patches, single-cell patches, boundary edges), and score diagnostics (score distribution, number of eligible cells, share of cells where the minimize side outweighs the maximize side). `visualize_consensus.ipynb` writes `consensus_map.png/.tif`: the number of runs (out of 10) that newly select each unit, with baseline units as a separate class and oil-block outlines overlaid.
 
+## STAR species input
+
+The STAR files are produced by the STAR pipeline (part B) of [drc_30x30_data_prep](https://github.com/ClarkCGA/drc_30x30_data_prep) and are not version controlled here (`data/star/` is gitignored; the species file is ~1.9 GB). Copy them from `drc_30x30_data_prep/output/star/` into this repository's `data/star/`:
+
+| File | Content | Used for |
+|---|---|---|
+| `data/star/star_1km_species.parquet` | `grid_id` + one `sp_<id_no>` column per species (per-cell STAR values incl. category weight), 2,328,518 cells | the species layer (summed per cell) |
+| `data/star/star_1km_summary.parquet` | `grid_id`, `star_total`, `star_threatened`, `n_species` | reference / check of the summed total |
+| `data/star/star_species.csv` | species table: `id_no`, `sci_name`, `class`, `category`, `weight`, `global_km2`, `drc_km2`, `source`, `included`, ... | species summary / consistency check |
+
+To produce them in `drc_30x30_data_prep` (requires the raw IUCN and BirdLife data and `config/star_config.yaml`, see that repository's README):
+
+```bash
+cd drc_30x30_data_prep
+pixi run star-all        # = python -m star.run --config config/star_config.yaml all
+                         # (or stage by stage: pixi run star-iucn / star-birdlife / star-combine)
+```
+
+Then, from this repository:
+
+```bash
+mkdir -p data/star
+cp ../drc_30x30_data_prep/output/star/star_1km_species.parquet \
+   ../drc_30x30_data_prep/output/star/star_1km_summary.parquet \
+   ../drc_30x30_data_prep/output/star/star_species.csv data/star/
+```
+
+The paths are set in `configs/common/defaults.yml` (`species.star_path`, `species.species_table`). To use files elsewhere without copying (e.g. in Docker), set the optional overrides `DRC_STAR_PATH` and `DRC_STAR_SPECIES_TABLE`.
+
 ## Configurations
 Each scenario config in `configs/` `extends` two shared files, which are merged first:
 - `configs/common/themes.yml`: themes → maximize/minimize layers, Biodiversity shares, base share and minimize weight.
@@ -103,7 +132,7 @@ This will print out the URL to the Jupyter Lab (including its token). Copy the U
 
 ### 4. Prepare the Data
 
-Convert the planning-unit CSV to Parquet once (`python -m scripts.convert_to_parquet`). The STAR outputs are read from the data-prep repository next to this one (or set `DRC_STAR_PATH`).
+Convert the planning-unit CSV to Parquet once (`python -m scripts.convert_to_parquet`) and copy the STAR outputs into `data/star/` (see [STAR species input](#star-species-input)).
 
 ### 5. Execute the Tool 
 

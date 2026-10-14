@@ -14,12 +14,11 @@ species:
   # column per species (values already include IUCN category weights), and
   # the matching species table (id_no, name, class, category, weight,
   # global_km2, drc_km2, source). Both are produced by the STAR pipeline in
-  # drc_30x30_data_prep (paths relative to this repository, assuming the two
-  # repositories sit side by side; the files are not copied into this repo).
-  # Can be overridden per run with the DRC_STAR_PATH / DRC_STAR_SPECIES_TABLE
-  # environment variables (e.g. inside Docker, where only this repo is mounted).
-  star_path: "../drc_30x30_data_prep/output/star/star_1km_species.parquet"
-  species_table: "../drc_30x30_data_prep/output/star/star_species.csv"
+  # drc_30x30_data_prep: copy drc_30x30_data_prep/output/star/* into
+  # data/star/ (gitignored; see README, "STAR species input"). Optional
+  # overrides: the DRC_STAR_PATH / DRC_STAR_SPECIES_TABLE environment variables.
+  star_path: "data/star/star_1km_species.parquet"
+  species_table: "data/star/star_species.csv"
   # Memory budget (MB) for one batch of species columns while summing.
   memory_budget_mb: 512
 
