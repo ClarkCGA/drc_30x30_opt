@@ -3,7 +3,7 @@ This repository contains the code for a spatial planning tool to support impleme
 
 The tool is built based on a dataset developed at spatial planning units of 1 km x 1 km. For each planning unit, a set of variables are calculated from existing products (e.g. above ground biomass). Existing protected areas are also mapped to the 1 km x 1 km grid, and they are input as constraints to the model.
 
-This code should be used as a tool to explore different prioritization scenarios. The current scenario set (10 runs) is described below; the first round of scenarios is kept in `archive/`.
+This code should be used as a tool to explore different prioritization scenarios. The current scenario set (10 runs) is described below; the first round of scenarios is available in the git history.
 
 ## Requirements
 ### Software
@@ -41,7 +41,7 @@ All layers are grouped into seven themes (`configs/common/themes.yml`):
 | Conservation priorities & spatial planning | `mean_GCP_Dinerstein`, `gc_frac` | |
 
 ### Weighting
-- Every layer is rescaled to 0-1 (min-max), except the STAR species total, which uses its percentile rank among cells with species (cells without species = 0; see [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md), "STAR species layer"). The method is set per layer under `scaling` in `configs/common/themes.yml`. Rescaling happens after no-data cells are filled: with the median of the observed cells for `mean_Anthropogenic_current_pressure`, `mean_Anthropogenic_future_pressure` and `mean_climate_vulnerability` (large coverage gaps, see [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md)), and with 0 for all other layers. The rule is set under `fill_na` in `configs/common/themes.yml`.
+- Every layer is rescaled to 0-1 (min-max), except the STAR species total, which uses its percentile rank among cells with species (cells without species = 0; tied values share their average rank). The STAR total is extremely heavy-tailed (median 0.00054, maximum 3.84 in a single cell of micro-endemic species), so min-max rescaling would leave it ~0 almost everywhere; rank scaling keeps the order of cells but not the magnitudes. The method is set per layer under `scaling` in `configs/common/themes.yml`. Rescaling happens after no-data cells are filled: with the median of the observed cells for `mean_Anthropogenic_current_pressure`, `mean_Anthropogenic_future_pressure` and `mean_climate_vulnerability` (large coverage gaps: the pressure layers have no data south of ~6°S, 27.7% of cells, and climate vulnerability covers only 31.7% of cells; the median makes missing cells neutral rather than "no pressure"), and with 0 for all other layers. The rule is set under `fill_na` in `configs/common/themes.yml`.
 - Both sides are balanced per theme: each theme gets a share of 1 (2 in its priority run) on the maximize side, split equally across its maximize layers, and separately a share of 1 (2 in its priority run) on the minimize side, split equally across its minimize layers. A theme with no layers on one side contributes 0 on that side.
 - Biodiversity is split 50% KBA / 50% species. The species half is the per-cell sum of the STAR values (which already include the category weights), so species contribute in proportion to their STAR values. In runs without species, KBA gets the full Biodiversity share.
 - Score per cell = Σ(weight × rescaled maximize layer) − Σ(weight × rescaled minimize layer). Units with score ≤ 0 or failing an exclusion rule are not candidates (baseline units are always included).
@@ -63,11 +63,11 @@ Config files are `01`–`10_config_<baseline>_<variant>.yml` (e.g. `01_config_pa
 ### Exclusions, area cap, connectivity and solver
 - Exclusion rules (`configs/common/defaults.yml`): urban/peri-urban/rural settlement classes and TMF deforested/degraded above thresholds; plus CFCL > 30% in the *PAs as baseline* runs. Oil blocks are **not** excluded.
 - Area cap: 30% of the total area (baseline included). Baseline units are locked in.
-- Connectivity (all scenarios): a reward of `w` = 0.25 (score units, `optimization.connectivity.weight` in `configs/common/defaults.yml`; 0 disables it) for every pair of selected units sharing a 1 km edge (rook adjacency built from `x_native`/`y_native`). A pair of a candidate and a baseline unit is a fixed bonus on the candidate, so new areas are also drawn towards existing baseline areas.
+- Connectivity (all scenarios): a reward of `w` = 0.25 (score units, `optimization.connectivity.weight` in `configs/common/defaults.yml`; 0 disables it) for every pair of selected units sharing a 1 km edge (rook adjacency built from `x_native`/`y_native`). A pair of a candidate and a baseline unit is a fixed bonus on the candidate, so new areas are also drawn towards existing baseline areas. On the full grid (*PAs as baseline - Balanced, no species*), w = 0.25 reduces the number of patches from 5,331 to 414 (single-cell patches 2,980 → 65) and the outer boundary by 41%, for 0.2% of the theme score; w = 1.0 gives 117 patches for 0.7%.
 - Solver (`optimization.solver.method`):
   - `mincut` (default): exact parametric min-cut (scipy). The area cap is handled by a price per km², bisected until the selection fits; a greedy fill then uses the remaining budget, and the Lagrangian bound gives the remaining gap (reported as `gap_rel` / `upper_bound` in `scenario_summary.csv`; status "Optimal" when the gap is ≤ 0.1%). Full grid: ~1 minute, ~5.5 GB RAM.
   - `cbc`: the same objective as an integer program in PuLP/CBC (y_ij ≤ x_i, y_ij ≤ x_j per adjacent pair), 2000 s time limit, 0.1% relative gap. Only practical on subsets when connectivity is on; kept for verification (`scripts/test_pipeline.py` cross-checks both solvers on a subset) and for future scenarios that need constraints min-cut cannot express.
-  - Limits of min-cut: one area cap and non-negative pair rewards only. Per-province budgets, per-theme or species targets, or patch-size rules would need the CBC path (on reduced problems). See [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md).
+  - Limits of min-cut: one area cap and non-negative pair rewards only. Per-province budgets, per-theme or species targets, or patch-size rules would need the CBC path (on reduced problems).
 
 ### Outputs
 In `output/`, per scenario: `<name>.png/.tif` (priority areas: baseline + newly selected units), `<name> - Baseline Areas.png/.tif`, `<name> - Objective Score.png`, `<name> - Candidates.png`. `scenario_summary.csv` has one row per scenario: areas, newly selected area inside oil blocks (km², area-weighted by `oil_frac`, and % of the newly selected area), share of the national STAR total captured by the new areas and by baseline + new areas, for all species and threatened species only (`star_share_*`, `star_threatened_share_*`, from `star_1km_summary.parquet`, reported for every run including the no-species runs), solver information (solver, status, objective, upper bound and gap), fragmentation (number of patches, single-cell patches, boundary edges), and score diagnostics (score distribution, number of eligible cells, share of cells where the minimize side outweighs the maximize side). `visualize_consensus.ipynb` writes `consensus_map.png/.tif`: the number of runs (out of 10) that newly select each unit, with baseline units as a separate class and oil-block outlines overlaid.
@@ -148,12 +148,6 @@ python -m scripts.test_pipeline --out-dir output_test   # weight/reader checks, 
                                                         # min-cut vs CBC cross-check, end-to-end runs of all 10 scenarios
                                                         # on a 150 x 150 km subset + consensus map
 ```
-
-## Known issues
-- The original connectivity bonus never worked (`neighbors` was read as text, so no neighbour was ever matched; the term was also linear and rewarded neighbour counts, not adjacent selections). It has been replaced by the pairwise reward above, and the `neighbors` column is no longer read; all runs before this change had no connectivity effect.
-- The anthropogenic pressure layers stop at ~6°S (27.7% of cells missing) and `mean_climate_vulnerability` covers only 31.7% of cells (also nothing south of ~6°S, and mostly the forest block further north). Missing cells are filled with the median, so they are neutral rather than "no pressure"; see [docs/METHODS_NOTES.md](docs/METHODS_NOTES.md).
-- `pop_sum` has a few negative values (-200, -400) and is so skewed that after rescaling it is ~0 almost everywhere; `mean_MarinePressure` is likewise ~0 almost everywhere.
-
 
 ## Acknowledgements
 This project is funded by the Wildlife Conservation Society (WCS) through a contract with Clark CGA. 
