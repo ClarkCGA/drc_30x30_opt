@@ -10,4 +10,3 @@ data/star/
 # Synthetic STAR test data (scripts/make_dummy_star.py)
 data/star_dummy/
 output_test/
-output/
