@@ -38,7 +38,7 @@ scaling:
 # No-data handling for the scored layers (scripts/utils.py::pre_process_data):
 # `default` applies to every layer not listed under `columns`; a value can be
 # a number, "median" or "mean" (over the layer's non-missing cells). See
-# README, "Known issues", for the coverage facts behind these choices.
+# README, "Weighting", for the coverage facts behind these choices.
 fill_na:
   default: 0.0
   columns:

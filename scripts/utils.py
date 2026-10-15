@@ -362,7 +362,7 @@ def pre_process_data(df, config):
     `fill_na.columns` maps a layer to a number, "median" or "mean" (computed
     over the layer's non-missing cells in df, i.e. the full grid in normal
     runs); every other scored layer gets `fill_na.default` (0.0). See
-    the README ("Known issues") for the rationale.
+    the README ("Weighting") for the rationale.
     """
 
     fill = config.get("fill_na", {})

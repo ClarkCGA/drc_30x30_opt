@@ -41,7 +41,7 @@ All layers are grouped into seven themes (`configs/common/themes.yml`):
 | Conservation priorities & spatial planning | `mean_GCP_Dinerstein`, `gc_frac` | |
 
 ### Weighting
-- Every layer is rescaled to 0-1 (min-max), except the STAR species total, which uses its percentile rank among cells with species (cells without species = 0; tied values share their average rank). The STAR total is extremely heavy-tailed (median 0.00054, maximum 3.84 in a single cell of micro-endemic species), so min-max rescaling would leave it ~0 almost everywhere; rank scaling keeps the order of cells but not the magnitudes. The method is set per layer under `scaling` in `configs/common/themes.yml`. Rescaling happens after no-data cells are filled: with the median of the observed cells for `mean_Anthropogenic_current_pressure`, `mean_Anthropogenic_future_pressure` and `mean_climate_vulnerability` (large coverage gaps, see Known issues), and with 0 for all other layers. The rule is set under `fill_na` in `configs/common/themes.yml`.
+- Every layer is rescaled to 0-1 (min-max), except the STAR species total, which uses its percentile rank among cells with species (cells without species = 0; tied values share their average rank). The STAR total is extremely heavy-tailed (median 0.00054, maximum 3.84 in a single cell of micro-endemic species), so min-max rescaling would leave it ~0 almost everywhere; rank scaling keeps the order of cells but not the magnitudes. The method is set per layer under `scaling` in `configs/common/themes.yml`. Rescaling happens after no-data cells are filled: with the median of the observed cells for `mean_Anthropogenic_current_pressure`, `mean_Anthropogenic_future_pressure` and `mean_climate_vulnerability` (large coverage gaps: the pressure layers have no data south of ~6°S, 27.7% of cells, and climate vulnerability covers only 31.7% of cells; the median makes missing cells neutral rather than "no pressure"), and with 0 for all other layers. The rule is set under `fill_na` in `configs/common/themes.yml`.
 - Both sides are balanced per theme: each theme gets a share of 1 (2 in its priority run) on the maximize side, split equally across its maximize layers, and separately a share of 1 (2 in its priority run) on the minimize side, split equally across its minimize layers. A theme with no layers on one side contributes 0 on that side.
 - Biodiversity is split 50% KBA / 50% species. The species half is the per-cell sum of the STAR values (which already include the category weights), so species contribute in proportion to their STAR values. In runs without species, KBA gets the full Biodiversity share.
 - Score per cell = Σ(weight × rescaled maximize layer) − Σ(weight × rescaled minimize layer). Units with score ≤ 0 or failing an exclusion rule are not candidates (baseline units are always included).
@@ -148,12 +148,6 @@ python -m scripts.test_pipeline --out-dir output_test   # weight/reader checks, 
                                                         # min-cut vs CBC cross-check, end-to-end runs of all 10 scenarios
                                                         # on a 150 x 150 km subset + consensus map
 ```
-
-## Known issues
-- The original connectivity bonus never worked (`neighbors` was read as text, so no neighbour was ever matched; the term was also linear and rewarded neighbour counts, not adjacent selections). It has been replaced by the pairwise reward above, and the `neighbors` column is no longer read; all runs before this change had no connectivity effect.
-- The anthropogenic pressure layers stop at ~6°S (27.7% of cells missing) and `mean_climate_vulnerability` covers only 31.7% of cells (also nothing south of ~6°S, and mostly the forest block further north). Missing cells are filled with the median, so they are neutral rather than "no pressure".
-- `pop_sum` has a few negative values (-200, -400) and is so skewed that after rescaling it is ~0 almost everywhere; `mean_MarinePressure` is likewise ~0 almost everywhere.
-
 
 ## Acknowledgements
 This project is funded by the Wildlife Conservation Society (WCS) through a contract with Clark CGA. 
