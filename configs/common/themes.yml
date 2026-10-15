@@ -29,7 +29,7 @@ weighting:
 #           drops the magnitudes.
 # star_total uses rank because it is extremely heavy-tailed (a few cells of
 # micro-endemic species dominate it; min-max would leave ~0 everywhere else).
-# See docs/METHODS_NOTES.md.
+# See README, "Weighting".
 scaling:
   default: "minmax"
   columns:
@@ -38,7 +38,7 @@ scaling:
 # No-data handling for the scored layers (scripts/utils.py::pre_process_data):
 # `default` applies to every layer not listed under `columns`; a value can be
 # a number, "median" or "mean" (over the layer's non-missing cells). See
-# docs/METHODS_NOTES.md for the coverage facts behind these choices.
+# README, "Known issues", for the coverage facts behind these choices.
 fill_na:
   default: 0.0
   columns:

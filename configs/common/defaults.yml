@@ -31,7 +31,7 @@ optimization:
   # Connectivity: reward (in score units) for every pair of adjacent selected
   # planning units (sharing a 1 km edge). 0 disables it. On the full grid,
   # w = 0.25 cuts the number of patches by ~92% and the outer boundary of the
-  # selection by ~41% for ~0.2% of the theme score (see docs/METHODS_NOTES.md).
+  # selection by ~41% for ~0.2% of the theme score (see README).
   connectivity:
     weight: 0.25
 
