@@ -70,6 +70,7 @@ def run_scenario(config_path, bbox=None, output_dir="output", threads=None,
                     title=f"Prioritization Score – {name}",
                     file_name=f"{name} - Objective Score.png",
                     show=False, output_dir=output_dir)
+    utils.export_to_geotiff(drc_df, "objective_score", f"{name} - Objective Score.tif", output_dir=output_dir)
 
     # Candidate planning units
     drc_df = utils.iden_units(drc_df, config)
